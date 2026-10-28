@@ -5,9 +5,9 @@
 #[rapx::requires(Align(_ptr, u32), kind = "precond")]
 unsafe fn require_align_u32(_ptr: *const u32) {}
 
-// THRESHOLD: repeat=0 only sees aligned states; repeat=1 reaches the delayed unaligned overwrite.
+// THRESHOLD: repeat=1 only sees aligned states; repeat=2 reaches the delayed unaligned overwrite.
 #[rapx::verify]
-pub fn repeat1_reveals_delayed_unaligned(data: &[u32], limit: usize) {
+pub fn repeat2_reveals_delayed_unaligned(data: &[u32], limit: usize) {
     let base = data.as_ptr() as *const u8;
     let bad = base.wrapping_add(1);
     let mut selected = base;

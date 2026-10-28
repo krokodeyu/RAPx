@@ -113,6 +113,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // callee's parameter — follow both chains so the local that actually
         // materialized the fields is found.
         let mut arg_fields: Vec<(usize, Vec<usize>, VmValue<'z3, 'tcx>)> = Vec::new();
+        let mut bound_fields: FxHashSet<(usize, Vec<usize>)> = FxHashSet::default();
         for (i, arg) in arg_locals.iter().enumerate() {
             let caller_local = Local::from_usize(*arg);
             let mut source_locals: Vec<(Local, Vec<usize>)> = Vec::new();
@@ -151,7 +152,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         } else {
                             fields[prefix.len()..].to_vec()
                         };
-                        arg_fields.push((i + 1, stripped, fv));
+                        if bound_fields.insert((i + 1, stripped.clone())) {
+                            arg_fields.push((i + 1, stripped, fv));
+                        }
                     }
                 }
             }

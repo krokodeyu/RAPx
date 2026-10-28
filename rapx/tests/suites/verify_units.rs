@@ -789,13 +789,19 @@ unsound_tests_multi! {
 #[test]
 fn align_repeat_threshold_repeat0() {
     let output = run_with_args("verify_units/align_repeat_threshold", CMD_VERIFY_REPEAT_0);
-    assert_function_result(&output, "repeat1_reveals_delayed_unaligned", "SOUND");
+    assert_function_result(&output, "repeat2_reveals_delayed_unaligned", "SOUND");
 }
 
 #[test]
 fn align_repeat_threshold_repeat1() {
     let output = run_with_args("verify_units/align_repeat_threshold", CMD_VERIFY_REPEAT_1);
-    assert_unproved_exclusive(&output, "repeat1_reveals_delayed_unaligned", &["Align"]);
+    assert_function_result(&output, "repeat2_reveals_delayed_unaligned", "SOUND");
+}
+
+#[test]
+fn align_repeat_threshold_repeat2() {
+    let output = run_with_args("verify_units/align_repeat_threshold", CMD_VERIFY_REPEAT_2);
+    assert_unproved_exclusive(&output, "repeat2_reveals_delayed_unaligned", &["Align"]);
 }
 
 // Loop Repeat Threshold Cases

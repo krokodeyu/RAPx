@@ -73,6 +73,7 @@ impl PropertyChecker {
                         && args.first().and_then(|arg| arg.as_type()) == Some(expected_ty)
                         && vm_state.content(alloc_id).facts.inner_uninit
                         && vm_state.content(alloc_id).facts.written_pointee_ty != Some(expected_ty)
+                        && !crate::verify::api_classify::is_mem_copy_or_write(checkpoint.callee)
                     {
                         return CheckResult::Failed;
                     }

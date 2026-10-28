@@ -240,6 +240,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 flow,
                 &mut relevant,
                 &mut items,
+                0,
                 keep_inv,
                 keep_owner,
             );
@@ -313,6 +314,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     );
                 }
                 let block_stmt_count = block_data.statements.len();
+                let block_items_start = items.len();
                 for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                     visitor.visit_statement(
                         def_id,
@@ -336,6 +338,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         flow,
                         &mut relevant,
                         &mut items,
+                        block_items_start,
                         keep_inv,
                         keep_owner,
                     );
@@ -392,6 +395,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
+        block_items_start: usize,
         keep_inv: bool,
         keep_owner: bool,
     ) {
@@ -418,6 +422,18 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 );
             }
         }
+        let mut seen = HashSet::new();
+        let mut block_items: Vec<_> = items.drain(block_items_start..).collect();
+        block_items.retain(|item| match item {
+            RelevantItem::Statement { statement_index, .. } => seen.insert(*statement_index),
+            _ => true,
+        });
+        block_items.sort_by_key(|item| match item {
+            RelevantItem::Terminator { .. } => (0, 0),
+            RelevantItem::Statement { statement_index, .. } => (1, usize::MAX - statement_index),
+            _ => (2, 0),
+        });
+        items.extend(block_items);
     }
 }
 

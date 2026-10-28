@@ -88,13 +88,6 @@ static REGISTRY: &[Entry] = &[
     ED!(
         |callee| other_api::matches_any(
             callee,
-            &[other_api::box_into_raw(), other_api::cstring_into_raw()],
-        ),
-        eff_alias_ptr
-    ),
-    ED!(
-        |callee| other_api::matches_any(
-            callee,
             &[other_api::vec_as_mut_ptr(), other_api::nonnull_as_ptr()],
         ),
         eff_alias_ptr
