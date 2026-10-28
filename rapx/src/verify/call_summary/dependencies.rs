@@ -105,6 +105,13 @@ fn intrinsic_dependency_summary<'tcx>(
         return None;
     }
     let modeled = effects::lookup_effect(tcx, caller, callee, func, destination);
+    if api_classify::is_ptr_copy(callee) && modeled.is_none() {
+        return Some(CallDependencySummary {
+            return_depends_on_args: (0..arg_count).collect(),
+            write_args: (arg_count > 1).then_some(1).into_iter().collect(),
+            write_inputs: (0..arg_count.min(3)).collect(),
+        });
+    }
     let write_args: Vec<usize> = if let Some(ref effects) = modeled {
         effects
             .iter()

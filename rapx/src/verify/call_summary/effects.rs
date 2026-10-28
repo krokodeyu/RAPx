@@ -68,7 +68,7 @@ static REGISTRY: &[Entry] = &[
     ED!(intrinsic_api::is_unchecked_add, eff_return_add),
     ED!(intrinsic_api::is_unchecked_mul, eff_return_mul),
     ED!(intrinsic_api::is_wrapping_sub, eff_wrapping_sub),
-    ED!(api_classify::is_ptr_copy, eff_copy_memory),
+    ED!(api_classify::is_intrinsic_copy, eff_copy_memory),
     ED!(intrinsic_api::is_typed_swap_nonoverlapping, eff_swap_memory),
     ED!(intrinsic_api::is_write_bytes, eff_fill_bytes),
     ED!(api_classify::is_intrinsic_nonzero_preserving, eff_return_nonzero_iff),
@@ -157,6 +157,14 @@ pub(crate) fn lookup_effect<'tcx>(
             };
             return Some((e.effects)(&ctx));
         }
+    }
+    if callee.is_some_and(|id| api_classify::is_ptr_copy(Some(id)) && !tcx.is_mir_available(id)) {
+        return Some(eff_copy_memory(&EffCtx {
+            tcx,
+            caller,
+            func,
+            dest,
+        }));
     }
     None
 }
