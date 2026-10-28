@@ -344,6 +344,9 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let src_val = state.value_of_operand(operand);
     let src_ty = src_val.ty;
+    let nonnull_to_raw = matches!(kind, CastKind::Transmute)
+        && matches!(cast_ty.kind(), TyKind::RawPtr(..))
+        && matches!(src_ty.kind(), TyKind::Adt(adt, _) if api_classify::is_std_nonnull(adt.did()));
     let numeric_transmute = matches!(kind, CastKind::Transmute)
         && mir_utils::is_std_crate_def_id(state.tcx, state.current_frame.current_def_id)
         && src_val.provenance.is_none()
@@ -396,7 +399,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
         ty: cast_ty,
         provenance: src_val.provenance,
         facts: ValueFacts {
-            non_null: src_val.facts.non_null,
+            non_null: src_val.facts.non_null || nonnull_to_raw,
             dangling: src_val.facts.dangling || numeric_transmute,
             init: src_val.facts.init,
             in_bounds: src_val.facts.in_bounds,

@@ -85,17 +85,8 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
     // ── MIR available — precise symbolic summary ────────────────────
     ED!(api_classify::is_checked_next_pow2, eff_return_option_some_nonzero),
-    ED!(
-        |callee| other_api::matches_any(
-            callee,
-            &[other_api::vec_as_mut_ptr(), other_api::nonnull_as_ptr()],
-        ),
-        eff_alias_ptr
-    ),
     ED!(api_classify::is_str_as_bytes, eff_alias_arg0),
     ED!(api_classify::is_slice_get_unchecked, eff_alias_ptr),
-    // `SliceIndex::get_unchecked(self, slice)` returns `slice + self` (receiver
-    // is the index), so model as element-strided add off argument 1.
     ED!(api_classify::is_sliceindex_get_unchecked, eff_sliceindex_get_unchecked),
     ED!(api_classify::is_ownership_reconstruction, eff_ownership_recon),
     ED!(api_classify::is_manually_drop_drop, eff_drop_memory),

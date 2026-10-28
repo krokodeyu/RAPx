@@ -6,7 +6,7 @@
 use crate::helpers::mir_utils;
 use z3::Config;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Local, Operand, Rvalue, StatementKind};
@@ -297,6 +297,7 @@ impl<'tcx> VerifyEngine<'tcx> {
         items: Vec<RelevantItem<'tcx>>,
         tree: &PathTree,
         local_to_global: &HashMap<(DefId, usize), Vec<usize>>,
+        path_blocks: &HashSet<usize>,
         caller: DefId,
     ) -> Vec<RelevantItem<'tcx>> {
         let mut out: Vec<RelevantItem<'tcx>> = Vec::new();
@@ -371,10 +372,16 @@ impl<'tcx> VerifyEngine<'tcx> {
                                 let mut matching: Vec<usize> = globals
                                     .iter()
                                     .copied()
-                                    .filter(|&g| eff_parent(g) == current_parent)
+                                    .filter(|&g| {
+                                        path_blocks.contains(&g) && eff_parent(g) == current_parent
+                                    })
                                     .collect();
                                 if matching.is_empty() {
-                                    matching = globals.to_vec();
+                                    matching = globals
+                                        .iter()
+                                        .copied()
+                                        .filter(|g| path_blocks.contains(g))
+                                        .collect();
                                 }
                                 // Match single-arg and pointer-arithmetic calls by argument;
                                 // other calls use the positional cursor.
@@ -706,6 +713,7 @@ impl<'tcx> VerifyEngine<'tcx> {
         goals
             .into_iter()
             .map(|mut goal| {
+                let path_blocks: HashSet<usize> = goal.path.blocks.iter().copied().collect();
                 let path_desc = goal.path.describe_caller_indices(tree);
                 if !entry_facts.is_empty() {
                     let mut items = entry_facts.to_vec();
@@ -718,6 +726,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                     goal.items,
                     tree,
                     &local_to_global,
+                    &path_blocks,
                     checkpoint.caller,
                 );
                 let vm_state = super::vm::execute_goal(
