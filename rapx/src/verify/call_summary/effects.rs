@@ -47,10 +47,6 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_iter_len, eff_iter_len),
     ED!(api_classify::is_iter_is_empty, eff_iter_is_empty),
     ED!(api_classify::is_nonnull_checked_new, eff_nonnull_new),
-    ED!(
-        |callee| other_api::matches_any(callee, &[other_api::nonnull_dangling()]),
-        eff_dangling_ptr
-    ),
     ED!(api_classify::is_iter_next, eff_iter_next),
     ED!(api_classify::is_range_next, eff_range_next),
     // ── Layout and intrinsic effects ───────────────────────────────
@@ -173,10 +169,6 @@ pub(crate) fn lookup_effect<'tcx>(
 
 fn eff_uninit_wrapper(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnUninitWrapper]
-}
-
-fn eff_dangling_ptr(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnDanglingPointer]
 }
 
 fn eff_return_arg_value(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

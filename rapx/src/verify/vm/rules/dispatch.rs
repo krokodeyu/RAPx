@@ -135,7 +135,7 @@ pub(super) fn eval_rvalue<'z3, 'tcx>(
         Rvalue::UnaryOp(op, operand) => {
             ("UnaryOp", rvalue::eval_unary_op(state, place, *op, operand))
         }
-        Rvalue::Cast(_, operand, ty) => ("Cast", rvalue::eval_cast(state, operand, *ty)),
+        Rvalue::Cast(kind, operand, ty) => ("Cast", rvalue::eval_cast(state, *kind, operand, *ty)),
         Rvalue::Aggregate(kind, operands) => (
             "Aggregate",
             rvalue::eval_aggregate(state, place, kind, operands),

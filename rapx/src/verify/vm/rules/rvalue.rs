@@ -3,7 +3,7 @@
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
-use rustc_middle::mir::{AggregateKind, BinOp, Operand, Place, UnOp};
+use rustc_middle::mir::{AggregateKind, BinOp, CastKind, Operand, Place, UnOp};
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::ty::{Ty, TyKind};
@@ -338,11 +338,19 @@ pub(crate) fn eval_unary_op<'z3, 'tcx>(
 
 pub(crate) fn eval_cast<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
+    kind: CastKind,
     operand: &Operand<'tcx>,
     cast_ty: Ty<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
     let src_val = state.value_of_operand(operand);
     let src_ty = src_val.ty;
+    let numeric_transmute = matches!(kind, CastKind::Transmute)
+        && mir_utils::is_std_crate_def_id(state.tcx, state.current_frame.current_def_id)
+        && src_val.provenance.is_none()
+        && (matches!(src_ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
+            || matches!(src_val.source, ValueSource::Discriminant(_)))
+        && (matches!(cast_ty.kind(), TyKind::RawPtr(..))
+            || matches!(cast_ty.kind(), TyKind::Adt(adt, _) if api_classify::is_std_nonnull(adt.did())));
     // A raw-pointer cast to a *different* ADT pointee reinterprets the
     // allocation's fields (e.g. `NonNull<LeafNode>::as_ptr() as *mut
     // InternalNode` in `NodeRef::as_internal_ptr`).  Lazily materialize the
@@ -389,7 +397,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
         provenance: src_val.provenance,
         facts: ValueFacts {
             non_null: src_val.facts.non_null,
-            dangling: src_val.facts.dangling,
+            dangling: src_val.facts.dangling || numeric_transmute,
             init: src_val.facts.init,
             in_bounds: src_val.facts.in_bounds,
             align_n: if mir_utils::pointee_ty(src_ty).is_some_and(|t| t.is_unit()) {

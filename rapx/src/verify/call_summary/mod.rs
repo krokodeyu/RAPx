@@ -34,7 +34,6 @@ pub(crate) type CallEffectSummary = Vec<CallEffect>;
 /// Path-local effect produced by a retained call.
 #[derive(Clone, Debug)]
 pub(crate) enum CallEffect {
-    ReturnDanglingPointer,
     /// The returned `MaybeUninit<T>` wrapper is valid but its inner `T` is not initialized.
     ReturnUninitWrapper,
     /// The return value aliases or is a direct value flow from an argument.

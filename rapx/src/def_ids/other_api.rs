@@ -1064,12 +1064,6 @@ known_items! {
         "std::ptr::non_null::NonNull::<T>::as_ptr",
         "core::ptr::non_null::NonNull::<T>::as_ptr"
     ],
-    nonnull_dangling: &[
-        "std::ptr::NonNull::<T>::dangling",
-        "core::ptr::NonNull::<T>::dangling",
-        "std::ptr::non_null::NonNull::<T>::dangling",
-        "core::ptr::non_null::NonNull::<T>::dangling"
-    ],
     nonnull_slice_is_empty: &[
         "std::ptr::NonNull::<[T]>::is_empty",
         "core::ptr::NonNull::<[T]>::is_empty",
