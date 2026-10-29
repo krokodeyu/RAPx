@@ -250,9 +250,7 @@ impl PropertyChecker {
             return result;
         }
         let reachability = z3::Solver::new(vm_state.z3_ctx);
-        for assertion in &vm_state.constraints.assertions {
-            reachability.assert(assertion);
-        }
+        vm_state.assert_path_constraints(&reachability);
         if reachability.check() == z3::SatResult::Unsat {
             CheckResult::ProvedBySmt
         } else {
@@ -320,17 +318,16 @@ impl PropertyChecker {
                     PropertyArg::Expr(ContractExpr::Const(index)) => usize::try_from(*index).ok(),
                     _ => None,
                 });
-                if self
+                let target_alloc_id = self
                     .target_value(vm_state, checkpoint, property)
-                    .and_then(|value| value.provenance_alloc_id())
+                    .and_then(|value| value.provenance_alloc_id());
+                if target_alloc_id
                     .is_some_and(|id| vm_state.callback_may_drop.contains(&vm_state.root_alloc(id)))
                 {
                     return CheckResult::Unknown(UnknownReason::CallbackMayInvalidate);
                 }
                 if atom.kind == PropertyKind::Init
-                    && (self
-                        .target_value(vm_state, checkpoint, property)
-                        .and_then(|value| value.provenance_alloc_id())
+                    && (target_alloc_id
                         .is_some_and(|id| vm_state.possible_uninit_allocs.contains(&id))
                         || target_arg
                             .and_then(|index| checkpoint.args.get(index))

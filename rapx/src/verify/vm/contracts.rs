@@ -624,9 +624,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// the corresponding function parameter in the VM state.
     fn resolve_contract_count(&self, arg: &PropertyArg<'tcx>) -> Option<Int<'z3>> {
         match arg {
-            PropertyArg::Expr(ContractExpr::Const(n)) => {
-                Some(Int::from_u64(self.z3_ctx, *n as u64))
-            }
             PropertyArg::Expr(expr) => self.eval_contract_expr_simple(expr),
             _ => None,
         }
@@ -637,12 +634,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         &self,
         pred: &crate::verify::contract::NumericPredicate<'tcx>,
     ) -> Option<Bool<'z3>> {
-        use crate::verify::contract::ContractExpr;
         let lhs = self.eval_contract_expr_simple(&pred.lhs)?;
-        let rhs = match &pred.rhs {
-            ContractExpr::Const(v) => Int::from_u64(self.z3_ctx, *v as u64),
-            _ => self.eval_contract_expr_simple(&pred.rhs)?,
-        };
+        let rhs = self.eval_contract_expr_simple(&pred.rhs)?;
         Some(self.contract_relop_bool(pred.op, &lhs, &rhs))
     }
 
@@ -765,21 +758,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     fn record_index_access_fact(&mut self, property: &Property<'tcx>) {
-        let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
-            property.args().first()
-        else {
+        let Some((slice_local, index_local)) = index_access_locals(property) else {
             return;
         };
-        let (ContractExpr::Place(slice_place), ContractExpr::Place(index_place)) =
-            (slice.as_ref(), index.as_ref())
-        else {
-            return;
-        };
-        if !slice_place.projections.is_empty() || !index_place.projections.is_empty() {
-            return;
-        }
-        let slice_local = slice_place.base.to_local();
-        let index_local = index_place.base.to_local();
         if let (Some(slice), Some(index)) = (
             self.local_value(slice_local),
             self.local_value(index_local),
@@ -990,23 +971,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
+    fn for_each_target_alloc(&self, property: &Property<'tcx>) -> Option<AllocId> {
+        property.for_each()?;
+        self.contract_target_value(property)?.provenance_alloc_id()
+    }
+
     /// Record the `Align(container.iter(), T)` for_each fact: every element
     /// pointer is aligned to `align_of(T)`.  Anchored to the container
     /// allocation so a pointer loaded from it can discharge `Align(cur, T)`.
     fn record_for_each_align(&mut self, property: &Property<'tcx>) {
-        if property.for_each().is_none() {
-            return;
-        }
-        let Some(ty) = property.args().get(1).and_then(|a| match a {
-            PropertyArg::Ty(ty) => Some(*ty),
-            _ => None,
-        }) else {
+        let Some(ty) = property.ty_arg(1) else {
             return;
         };
-        let Some(alloc_id) = self
-            .contract_target_value(property)
-            .and_then(|v| v.provenance_alloc_id())
-        else {
+        let Some(alloc_id) = self.for_each_target_alloc(property) else {
             return;
         };
         self.alloc_mut(alloc_id).facts.for_each.aligned_ty = Some(ty);
@@ -1015,13 +992,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Record the `Allocated(container.iter(), T, n)` for_each fact: every
     /// element pointer backs `>= n` `T` elements (`n` may be symbolic).
     fn record_for_each_allocated(&mut self, property: &Property<'tcx>) {
-        if property.for_each().is_none() {
-            return;
-        }
-        let Some(ty) = property.args().get(1).and_then(|a| match a {
-            PropertyArg::Ty(ty) => Some(*ty),
-            _ => None,
-        }) else {
+        let Some(ty) = property.ty_arg(1) else {
             return;
         };
         let count = property
@@ -1029,10 +1000,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .get(2)
             .and_then(|a| self.resolve_contract_count(a))
             .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
-        let Some(alloc_id) = self
-            .contract_target_value(property)
-            .and_then(|v| v.provenance_alloc_id())
-        else {
+        let Some(alloc_id) = self.for_each_target_alloc(property) else {
             return;
         };
         self.alloc_mut(alloc_id).facts.for_each.allocated = Some((ty, count));
@@ -1042,13 +1010,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// pointer is the sole owner of its pointee.  Anchored to the container
     /// allocation so a pointer loaded from it can discharge `Owning(cur)`.
     fn record_for_each_owning(&mut self, property: &Property<'tcx>) {
-        if property.for_each().is_none() {
-            return;
-        }
-        let Some(alloc_id) = self
-            .contract_target_value(property)
-            .and_then(|v| v.provenance_alloc_id())
-        else {
+        let Some(alloc_id) = self.for_each_target_alloc(property) else {
             return;
         };
         self.alloc_mut(alloc_id).facts.for_each.owning = true;

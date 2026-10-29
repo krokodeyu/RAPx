@@ -131,9 +131,7 @@ impl PropertyChecker {
                 *ty
             };
             if let Some(alloc_id) = value.provenance_alloc_id()
-                && vm_state.bounded_object_spans.iter().any(|(id, address, span_ty)| {
-                    *id == alloc_id && *address == value.z3_term && *span_ty == concrete_ty
-                })
+                && vm_state.has_bounded_object_span(alloc_id, &value.z3_term, concrete_ty)
             {
                 return CheckResult::ProvedByRule;
             }

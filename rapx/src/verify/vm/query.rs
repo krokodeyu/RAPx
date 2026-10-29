@@ -19,6 +19,24 @@ pub(crate) enum ContractTargetContext<'a, 'tcx> {
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    fn bound_field_value(&self, local: Local, path: &[usize]) -> Option<VmValue<'z3, 'tcx>> {
+        if path.is_empty() {
+            self.local_value(local).cloned()
+        } else {
+            self.field_value(local, path).cloned()
+        }
+    }
+
+    pub(crate) fn has_bounded_object_span(
+        &self,
+        alloc_id: AllocId,
+        address: &Int<'z3>,
+        ty: Ty<'tcx>,
+    ) -> bool {
+        self.bounded_object_spans
+            .contains(&(alloc_id, address.clone(), ty))
+    }
+
     pub(crate) fn callsite_operand_for_local<'a>(
         &self,
         checkpoint: &'a Checkpoint<'tcx>,
@@ -139,11 +157,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
                 ContractProjection::Downcast { variant_index } => {
                     if checkpoint.is_none() {
-                        return if field_path.is_empty() {
-                            self.local_value(base_local).cloned()
-                        } else {
-                            self.field_value(base_local, &field_path).cloned()
-                        };
+                        return self.bound_field_value(base_local, &field_path);
                     }
                     let base_val = self
                         .field_value(base_local, &field_path)
@@ -184,11 +198,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
                 ContractProjection::ForEach => {
                     if checkpoint.is_none() {
-                        return if field_path.is_empty() {
-                            self.local_value(base_local).cloned()
-                        } else {
-                            self.field_value(base_local, &field_path).cloned()
-                        };
+                        return self.bound_field_value(base_local, &field_path);
                     }
                     if let Some(val) = self.field_value(base_local, &field_path) {
                         return Some(val.clone());

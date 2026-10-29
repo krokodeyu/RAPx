@@ -223,9 +223,7 @@ impl PropertyChecker {
         if let Some(known_align) = value.facts.align_n.as_ref() {
             local.assert(&value.z3_term.rem(known_align)._eq(&zero));
         }
-        for cond in &vm_state.constraints.assertions {
-            local.assert(cond);
-        }
+        vm_state.assert_path_constraints(&local);
         let negated = value.z3_term.rem(&align_term)._eq(&zero).not();
         local.assert(&negated);
         let r = match local.check() {
@@ -287,9 +285,7 @@ impl PropertyChecker {
                 solver.assert(&alloc.base.rem(&alloc.align)._eq(&zero));
             }
         }
-        for cond in &vm_state.constraints.assertions {
-            solver.assert(cond);
-        }
+        vm_state.assert_path_constraints(&solver);
         let align_term = Int::from_u64(vm_state.z3_ctx, align);
         solver.assert(&value.z3_term.rem(&align_term)._eq(&zero).not());
         let r = solver.check() == SatResult::Unsat;
@@ -320,9 +316,7 @@ impl PropertyChecker {
         // would circularly "prove" `NonNull` on the pointer being dereferenced.
         let zero = Int::from_u64(vm_state.z3_ctx, 0);
         let local = Solver::new(vm_state.z3_ctx);
-        for cond in &vm_state.constraints.assertions {
-            local.assert(cond);
-        }
+        vm_state.assert_path_constraints(&local);
         self.smt_check(&local, &value.z3_term._eq(&zero))
     }
 
@@ -423,9 +417,7 @@ impl PropertyChecker {
                 .get(2)
                 .and_then(|arg| self.resolve_arg_term(vm_state, checkpoint, arg))
                 .is_none_or(|count| count.simplify().as_u64() == Some(1))
-            && vm_state.bounded_object_spans.iter().any(|(id, address, ty)| {
-                *id == alloc_id && *address == value.z3_term && *ty == required_ty
-            })
+            && vm_state.has_bounded_object_span(alloc_id, &value.z3_term, required_ty)
         {
             return CheckResult::ProvedByRule;
         }

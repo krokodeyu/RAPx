@@ -2,7 +2,7 @@
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, Operand};
-use rustc_middle::ty::TyKind;
+use rustc_middle::ty::{Ty, TyKind};
 use z3::ast::{Ast, Bool, Int};
 
 use super::state::{
@@ -1223,47 +1223,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if let Some(box_alloc) = args.first().and_then(|v| v.provenance_alloc_id()) {
                     self.copy_byte_tracking(box_alloc, 0, alloc_id);
                 }
-                let dest_alloc_id = self.current_frame.local_alloc.get(&dest).copied();
-                self.content_mut(alloc_id).facts.initialized = true;
-                let vec_base = base.clone();
-                self.set_local(
-                    dest,
-                    VmValue {
-                        z3_term: base,
-                        ty: dest_ty,
-                        provenance: dest_alloc_id.map(|stack_id| Provenance {
-                            alloc_id: stack_id,
-                            offset: Int::from_u64(self.z3_ctx, 0),
-                            offset_kind: None,
-                        }),
-                        facts: ValueFacts {
-                            non_null: true,
-                            init: true,
-                            in_bounds: true,
-                            ..ValueFacts::default()
-                        },
-                        source: ValueSource::None,
-                    },
-                );
-                if let rustc_middle::ty::TyKind::Adt(adt_def, _) = dest_ty.kind()
-                    && api_classify::is_std_vec(adt_def.did())
+                if let Some(ptr_field) =
+                    self.set_external_container_result(dest, alloc_id, base, elem_ty)
                 {
-                    let ptr_field = VmValue {
-                        z3_term: vec_base,
-                        ty: elem_ty.unwrap_or(dest_ty),
-                        provenance: Some(Provenance {
-                            alloc_id,
-                            offset: Int::from_u64(self.z3_ctx, 0),
-                            offset_kind: None,
-                        }),
-                        facts: ValueFacts {
-                            non_null: true,
-                            init: true,
-                            in_bounds: true,
-                            ..ValueFacts::default()
-                        },
-                        source: ValueSource::None,
-                    };
                     let len_term = known_len
                         .clone()
                         .unwrap_or_else(|| self.fresh_int(&format!("vec_len_{}", dest.as_usize())));
@@ -1412,6 +1374,59 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.set_local(dest, VmValue::new(term, ty));
     }
 
+    fn set_external_container_result(
+        &mut self,
+        dest: Local,
+        alloc_id: AllocId,
+        base: Int<'z3>,
+        elem_ty: Option<Ty<'tcx>>,
+    ) -> Option<VmValue<'z3, 'tcx>> {
+        let dest_ty = self.body().local_decls[dest].ty;
+        let dest_alloc_id = self.current_frame.local_alloc.get(&dest).copied();
+        self.content_mut(alloc_id).facts.initialized = true;
+        self.set_local(
+            dest,
+            VmValue {
+                z3_term: base.clone(),
+                ty: dest_ty,
+                provenance: dest_alloc_id.map(|stack_id| Provenance {
+                    alloc_id: stack_id,
+                    offset: Int::from_u64(self.z3_ctx, 0),
+                    offset_kind: None,
+                }),
+                facts: ValueFacts {
+                    non_null: true,
+                    init: true,
+                    in_bounds: true,
+                    ..ValueFacts::default()
+                },
+                source: ValueSource::None,
+            },
+        );
+        let TyKind::Adt(adt_def, _) = dest_ty.kind() else {
+            return None;
+        };
+        if !api_classify::is_std_vec(adt_def.did()) {
+            return None;
+        }
+        Some(VmValue {
+            z3_term: base,
+            ty: elem_ty.unwrap_or(dest_ty),
+            provenance: Some(Provenance {
+                alloc_id,
+                offset: Int::from_u64(self.z3_ctx, 0),
+                offset_kind: None,
+            }),
+            facts: ValueFacts {
+                non_null: true,
+                init: true,
+                in_bounds: true,
+                ..ValueFacts::default()
+            },
+            source: ValueSource::None,
+        })
+    }
+
     fn apply_vec_allocation(
         &mut self,
         dest: Local,
@@ -1435,48 +1450,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.alloc_mut(alloc_id)
                 .set_slice_len(count.z3_term.clone());
         }
-        let dest_alloc_id = self.current_frame.local_alloc.get(&dest).copied();
-        self.content_mut(alloc_id).facts.initialized = true;
-        let vec_base = base.clone();
         let vec_count = count.z3_term.clone();
-        self.set_local(
-            dest,
-            VmValue {
-                z3_term: base,
-                ty: dest_ty,
-                provenance: dest_alloc_id.map(|stack_id| Provenance {
-                    alloc_id: stack_id,
-                    offset: Int::from_u64(self.z3_ctx, 0),
-                    offset_kind: None,
-                }),
-                facts: ValueFacts {
-                    non_null: true,
-                    init: true,
-                    in_bounds: true,
-                    ..ValueFacts::default()
-                },
-                source: ValueSource::None,
-            },
-        );
-        if let TyKind::Adt(adt_def, _) = dest_ty.kind()
-            && api_classify::is_std_vec(adt_def.did())
+        if let Some(ptr_field) =
+            self.set_external_container_result(dest, alloc_id, base, elem_ty)
         {
-            let ptr_field = VmValue {
-                z3_term: vec_base,
-                ty: elem_ty.unwrap_or(dest_ty),
-                provenance: Some(Provenance {
-                    alloc_id,
-                    offset: Int::from_u64(self.z3_ctx, 0),
-                    offset_kind: None,
-                }),
-                facts: ValueFacts {
-                    non_null: true,
-                    init: true,
-                    in_bounds: true,
-                    ..ValueFacts::default()
-                },
-                source: ValueSource::None,
-            };
             let len = if initialized_len {
                 vec_count.clone()
             } else {

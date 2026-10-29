@@ -210,6 +210,27 @@ fn flow_xor_violation<'z3, 'tcx>(
     None
 }
 
+fn escaped_parameter_origin<'z3, 'tcx>(
+    vm_state: &VmState<'z3, 'tcx>,
+    checkpoint: &Checkpoint<'tcx>,
+    origin_arg: &Operand<'tcx>,
+) -> Option<(usize, Vec<usize>)> {
+    if !alias_hazard::destination_flows_to_return(
+        vm_state.tcx,
+        checkpoint.caller,
+        checkpoint.destination,
+    ) {
+        return None;
+    }
+    let origin = mir_utils::operand_mir_place(origin_arg)?;
+    let (root, fields) = crate::verify::vm::alias_tree::AliasTree::build(
+        vm_state.tcx,
+        checkpoint.caller,
+    )
+    .resolve_local_to_root(origin.local);
+    (root >= 1 && root <= vm_state.body().arg_count).then_some((root, fields))
+}
+
 /// Run the full alias hazard check for the VM backend.
 ///
 /// This is the function the `PropertyChecker::check_alias` delegates to.
@@ -263,21 +284,10 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     // A mut view produced through a raw field of a reference
                     // parameter (`(*self).next`). When it escapes, trace to the
                     // root parameter and reject a shared-reference origin.
-                    let dest_escapes = alias_hazard::destination_flows_to_return(
-                        vm_state.tcx,
-                        checkpoint.caller,
-                        checkpoint.destination,
-                    );
-                    if dest_escapes
-                        && let Some(mir_place) =
-                            mir_utils::operand_mir_place(origin_arg)
+                    if let Some((root, fields)) =
+                        escaped_parameter_origin(vm_state, checkpoint, origin_arg)
                     {
-                        let (root, fields) = crate::verify::vm::alias_tree::AliasTree::build(
-                            vm_state.tcx,
-                            checkpoint.caller,
-                        )
-                        .resolve_local_to_root(mir_place.local);
-                        if !fields.is_empty() && root >= 1 && root <= vm_state.body().arg_count {
+                        if !fields.is_empty() {
                             let root_ty = vm_state.body().local_decls
                                 [rustc_middle::mir::Local::from_usize(root)]
                             .ty;
@@ -309,21 +319,10 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     // same encapsulation check used by the view-producer path: a
                     // public or safe-code-exposed raw field cannot uphold the
                     // returned `&T`.
-                    let dest_escapes = alias_hazard::destination_flows_to_return(
-                        vm_state.tcx,
-                        checkpoint.caller,
-                        checkpoint.destination,
-                    );
-                    if dest_escapes
-                        && let Some(mir_place) =
-                            mir_utils::operand_mir_place(origin_arg)
+                    if let Some((root, fields)) =
+                        escaped_parameter_origin(vm_state, checkpoint, origin_arg)
                     {
-                        let (root, fields) = crate::verify::vm::alias_tree::AliasTree::build(
-                            vm_state.tcx,
-                            checkpoint.caller,
-                        )
-                        .resolve_local_to_root(mir_place.local);
-                        if !fields.is_empty() && root >= 1 && root <= vm_state.body().arg_count {
+                        if !fields.is_empty() {
                             let resolved = PlaceKey::from_origin(root, fields);
                             if let Some(sfo) = alias_hazard::self_field_origin(
                                 vm_state.tcx,
@@ -343,7 +342,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                                     );
                                 }
                             }
-                        } else if root >= 1 && root <= vm_state.body().arg_count {
+                        } else {
                             // A direct shared-reference parameter whose view
                             // escapes to the return must not claim a region that
                             // outlives its own (e.g. returning a `&'b str` as
@@ -746,6 +745,19 @@ fn escape_region_violation(
     None
 }
 
+fn self_field_origin(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
+    struct_def_id: DefId,
+    field_index: usize,
+) -> Option<FieldOrigin> {
+    let field = tcx.adt_def(struct_def_id).all_fields().nth(field_index)?;
+    Some(FieldOrigin {
+        struct_def_id,
+        field_index,
+        field_name: field.name.to_string(),
+    })
+}
+
 /// Attempt to extract the MIR local index from an operand for PlaceKey construction.
 /// Try to find a struct field origin by examining checkpoint arguments
 /// and the function's self type. Handles the case where origin tracing
@@ -765,23 +777,15 @@ fn find_struct_field_origin_for_param<'tcx>(
     };
 
     if !arg_place.projection.is_empty() && arg_place.local == Local::from_usize(1) {
-        let fields: Vec<usize> = arg_place
+        let field_index = arg_place
             .projection
             .iter()
-            .filter_map(|p| match p {
+            .find_map(|p| match p {
                 ProjectionElem::Field(idx, _) => Some(idx.as_usize()),
                 _ => None,
-            })
-            .collect();
-        if !fields.is_empty() {
-            let field_index = fields[0];
-            let adt = tcx.adt_def(adt_def);
-            let field = adt.all_fields().nth(field_index)?;
-            return Some(FieldOrigin {
-                struct_def_id: adt_def,
-                field_index,
-                field_name: field.name.to_string(),
             });
+        if let Some(field_index) = field_index {
+            return self_field_origin(tcx, adt_def, field_index);
         }
     }
 
@@ -804,25 +808,17 @@ fn find_struct_field_origin_for_param<'tcx>(
                 if source.local != Local::from_usize(1) {
                     continue;
                 }
-                let fields: Vec<usize> = source
+                let field_index = source
                     .projection
                     .iter()
-                    .filter_map(|p| match p {
+                    .find_map(|p| match p {
                         ProjectionElem::Field(idx, _) => Some(idx.as_usize()),
                         _ => None,
-                    })
-                    .collect();
-                if fields.is_empty() {
+                    });
+                let Some(field_index) = field_index else {
                     continue;
-                }
-                let field_index = fields[0];
-                let adt = tcx.adt_def(adt_def);
-                let field = adt.all_fields().nth(field_index)?;
-                return Some(FieldOrigin {
-                    struct_def_id: adt_def,
-                    field_index,
-                    field_name: field.name.to_string(),
-                });
+                };
+                return self_field_origin(tcx, adt_def, field_index);
             }
         }
     }

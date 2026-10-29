@@ -147,8 +147,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             content.indexed_elements_modified = true;
             content.copied_prefix = None;
             content.facts.written_pointee_ty = None;
-            content.byte_array = None;
-            content.byte_written.clear();
+            content.clear_byte_writes();
             content.facts.cstr_trusted = false;
             content.facts.utf8_trusted = false;
             content.facts.split_transmute_to = None;
@@ -254,8 +253,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         content.values.clear();
         content.indexed_elements.clear();
         content.indexed_elements_modified = true;
-        content.byte_array = None;
-        content.byte_written.clear();
+        content.clear_byte_writes();
         self.store_value(prov.alloc_id, value.ty, Vec::new(), value);
         true
     }
@@ -277,8 +275,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         content.values.clear();
         content.indexed_elements.clear();
         content.indexed_elements_modified = true;
-        content.byte_array = None;
-        content.byte_written.clear();
+        content.clear_byte_writes();
     }
 
     fn write_field_allocation(
@@ -319,8 +316,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.byte_write(provenance.alloc_id, &provenance.offset, &value.z3_term);
         } else {
             let content = self.content_mut(provenance.alloc_id);
-            content.byte_array = None;
-            content.byte_written.clear();
+            content.clear_byte_writes();
         }
         let aliases = self.current_frame.local_alloc.keys().copied().filter(|local| {
             let local_ty = self.body().local_decls[*local].ty;
@@ -432,8 +428,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             } else {
                 let content = self.content_mut(provenance.alloc_id);
-                content.byte_array = None;
-                content.byte_written.clear();
+                content.clear_byte_writes();
             }
         }
         if let Some(index) = index {

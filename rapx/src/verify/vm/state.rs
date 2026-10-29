@@ -565,6 +565,13 @@ pub(crate) struct MemoryContent<'z3, 'tcx> {
     pub(crate) facts: ContentFacts<'tcx>,
 }
 
+impl MemoryContent<'_, '_> {
+    pub(crate) fn clear_byte_writes(&mut self) {
+        self.byte_array = None;
+        self.byte_written.clear();
+    }
+}
+
 /// Accumulated solver state for the current path.
 ///
 /// `assertions` is the assertion stream fed to Z3; `term_caches` holds the
@@ -726,7 +733,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// not for every alias, which a single boolean would wrongly license.
     pub(crate) alias_hazard_allocs: FxHashSet<AllocId>,
     pub(crate) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
-    pub(crate) bounded_object_spans: Vec<(AllocId, Int<'z3>, Ty<'tcx>)>,
+    pub(super) bounded_object_spans: Vec<(AllocId, Int<'z3>, Ty<'tcx>)>,
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
@@ -1250,9 +1257,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Assert path conditions and invariant constraints into a solver.
     pub(crate) fn assert_all(&self, solver: &z3::Solver<'z3>) {
-        for cond in &self.constraints.assertions {
-            solver.assert(cond);
-        }
+        self.assert_path_constraints(solver);
         let zero = Int::from_u64(self.z3_ctx, 0);
         for unit in &self.units {
             let alloc = &unit.allocation;
@@ -1279,6 +1284,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.assert_value_constraints(solver, value);
                 }
             }
+        }
+    }
+
+    pub(crate) fn assert_path_constraints(&self, solver: &z3::Solver<'z3>) {
+        for cond in &self.constraints.assertions {
+            solver.assert(cond);
         }
     }
 
