@@ -394,6 +394,13 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
+    pub(crate) fn ty_arg(&self, index: usize) -> Option<Ty<'tcx>> {
+        match self.args().get(index) {
+            Some(PropertyArg::Ty(ty)) => Some(*ty),
+            _ => None,
+        }
+    }
+
     /// The `ContractPlace` this atom's first argument refers to, when the
     /// first argument is a place (or an index access over one, e.g. `slice[i]`).
     pub(crate) fn target_place(&self) -> Option<&ContractPlace<'tcx>> {

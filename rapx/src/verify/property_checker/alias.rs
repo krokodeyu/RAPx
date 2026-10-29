@@ -33,7 +33,7 @@ impl PropertyChecker {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
-        let value = self.resolve_pointer_provenance(vm_state, value);
+        let value = vm_state.resolve_pointer_provenance(value);
         // `p` may be a pointer just derived from an owner (`Box::into_raw` /
         // `as_mut_ptr`), whose term still points at the owner's address but whose
         // own provenance slot is empty. Fall back to the owner's field provenance.

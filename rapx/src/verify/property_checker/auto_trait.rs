@@ -71,7 +71,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = Self::ty_arg(property, 0) else {
+        let Some(ty) = property.ty_arg(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let negatives: Vec<String> = property.args()[1..]
@@ -94,7 +94,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = Self::ty_arg(property, 0) else {
+        let Some(ty) = property.ty_arg(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         no_raw_ptr_check(vm_state.tcx, ty, checkpoint.caller, false)
@@ -107,7 +107,7 @@ impl PropertyChecker {
         _checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = Self::ty_arg(property, 0) else {
+        let Some(ty) = property.ty_arg(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         no_internal_mut_check(vm_state.tcx, ty)
@@ -121,7 +121,7 @@ impl PropertyChecker {
         _checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = Self::ty_arg(property, 0) else {
+        let Some(ty) = property.ty_arg(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         uni_internal_mut_check(vm_state.tcx, ty)
@@ -136,7 +136,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = Self::ty_arg(property, 0) else {
+        let Some(ty) = property.ty_arg(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         atomic_update_check(vm_state.tcx, ty, checkpoint.caller, false)
@@ -150,7 +150,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = Self::ty_arg(property, 0) else {
+        let Some(ty) = property.ty_arg(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         ref_send_check(vm_state.tcx, ty, checkpoint.caller, true)

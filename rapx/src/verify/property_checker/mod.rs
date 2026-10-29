@@ -1,12 +1,11 @@
 //! Property checks for the symbolic VM.
 
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::vm::state::{OffsetKind, VmState};
+use crate::verify::vm::state::VmState;
 use crate::verify::{
     contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind},
     report::{CheckResult, UnknownReason},
 };
-use z3::ast::Int;
 
 mod alias;
 mod auto_trait;
@@ -358,7 +357,7 @@ impl PropertyChecker {
                         UnknownReason::UnmodeledIntrinsic("opaque intrinsic result".to_string()),
                     ),
                 ] {
-                    if self.atom_depends_on_inline_terms(vm_state, checkpoint, property, terms) {
+                    if vm_state.atom_depends_on_inline_terms(checkpoint, property, terms) {
                         return CheckResult::Unknown(reason);
                     }
                 }
@@ -380,51 +379,6 @@ impl PropertyChecker {
                 }
             }
         }
-    }
-
-    /// Whether this atom's target or a checkpoint argument depends on an
-    /// unconstrained value introduced by incomplete inlining.
-    fn atom_depends_on_inline_terms<'z3, 'tcx>(
-        &self,
-        vm_state: &VmState<'z3, 'tcx>,
-        checkpoint: &Checkpoint<'tcx>,
-        property: &Property<'tcx>,
-        terms: &rustc_hash::FxHashSet<Int<'z3>>,
-    ) -> bool {
-        if terms.is_empty() {
-            return false;
-        }
-        // The checkpoint's argument operands (e.g. `ptr.add(n)`'s `n`) are what
-        // the property constrains; a truncated argument makes the check
-        // undecidable even when the target pointer itself is well-defined.
-        for operand in &checkpoint.args {
-            if self.value_involves_terms(terms, &vm_state.value_of_operand(operand)) {
-                return true;
-            }
-        }
-        if let Some(value) = self.target_value(vm_state, checkpoint, property)
-            && self.value_involves_terms(terms, &value)
-        {
-            return true;
-        }
-        false
-    }
-
-    fn value_involves_terms<'z3, 'tcx>(
-        &self,
-        terms: &rustc_hash::FxHashSet<Int<'z3>>,
-        value: &crate::verify::vm::state::VmValue<'z3, 'tcx>,
-    ) -> bool {
-        if VmState::term_involves(terms, &value.z3_term) {
-            return true;
-        }
-        value.provenance.as_ref().is_some_and(|p| {
-            VmState::term_involves(terms, &p.offset)
-                || matches!(
-                    &p.offset_kind,
-                    Some(OffsetKind::Element { index, .. }) if VmState::term_involves(terms, index)
-                )
-        })
     }
 
     fn check_or<'z3, 'tcx>(

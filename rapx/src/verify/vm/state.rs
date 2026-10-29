@@ -1159,43 +1159,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .collect()
     }
 
-    /// The buffer an `Iter`/`IterMut` at `local` walks: the provenance of its
-    /// `end` field.  This is frame-independent (the buffer allocation is
-    /// path-scoped), unlike the `local` itself. The iterator's own allocation
-    /// keys its element index in [`TermCaches::iter_ptr_offset`].
-    pub(crate) fn iter_buffer(&self, local: Local) -> Option<AllocId> {
-        self.field_value(local, &[1])
-            .and_then(|end| end.provenance.as_ref())
-            .map(|ep| ep.alloc_id)
-    }
-
-    /// The byte buffer walked by an iterator at `local`, possibly wrapped in
-    /// adapter types (`Cloned`/`Rev`/…).  `Rvalue::Aggregate` flattens nested
-    /// adapters, so the innermost `Iter`/`IterMut` `end` pointer is any tracked
-    /// field whose path ends in `[1]`.  Return its allocation and end offset
-    /// (the end offset doubles as the byte length when the element is `u8`).
-    pub(crate) fn iter_utf8_buffer(&self, local: Local) -> Option<(AllocId, Int<'z3>)> {
-        let mut best: Option<(usize, AllocId, Int<'z3>)> = None;
-        for path in self.field_paths(local) {
-            if path.last() != Some(&1) {
-                continue;
-            }
-            let Some(v) = self.field_value(local, &path) else {
-                continue;
-            };
-            let Some(prov) = v.provenance.as_ref() else {
-                continue;
-            };
-            if best
-                .as_ref()
-                .is_none_or(|(depth, _, _)| path.len() < *depth)
-            {
-                best = Some((path.len(), prov.alloc_id, prov.offset.clone()));
-            }
-        }
-        best.map(|(_, id, off)| (id, off))
-    }
-
     /// The field carrying an owned value's heap pointer (`Box`/`Vec`/`String`'s
     /// owning pointer field), located generically via
     /// [`Self::container_ptr_field`] (e.g. `Box` → `[0, 0]`, `Vec` → `[0, 0, 0]`).

@@ -20,8 +20,8 @@ impl PropertyChecker {
         _checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let src = Self::ty_arg(property, 0);
-        let dst = Self::ty_arg(property, 1);
+        let src = property.ty_arg(0);
+        let dst = property.ty_arg(1);
         match (src, dst) {
             (Some(s), Some(d)) => {
                 let ss = vm_state.size_of_ty(s);
@@ -59,7 +59,7 @@ impl PropertyChecker {
             if tcx.type_is_copy_modulo_regions(typing_env, ty) {
                 return CheckResult::ProvedByRule;
             }
-            let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, ty);
+            let resolved = vm_state.instantiate_callsite_ty(checkpoint, ty);
             if resolved != ty && tcx.type_is_copy_modulo_regions(typing_env, resolved) {
                 return CheckResult::ProvedByRule;
             }
@@ -107,10 +107,10 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let src = Self::ty_arg(property, 0);
-        let dst = Self::ty_arg(property, 1);
-        let src = src.map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
-        let dst = dst.map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
+        let src = property.ty_arg(0);
+        let dst = property.ty_arg(1);
+        let src = src.map(|ty| vm_state.instantiate_callsite_ty(checkpoint, ty));
+        let dst = dst.map(|ty| vm_state.instantiate_callsite_ty(checkpoint, ty));
         // A `SplitTransmute([T], [U])` contract declared by the caller licenses
         // the receiver slice's data allocation to be re-interpreted as `U`.  The
         // license is anchored to that allocation (`split_transmute_to`), so find

@@ -66,10 +66,10 @@ impl PropertyChecker {
         if self.is_concrete_zst(vm_state, value.ty) {
             return CheckResult::ProvedByRule;
         }
-        let ty_arg = Self::ty_arg(property, 1);
+        let ty_arg = property.ty_arg(1);
         let align = match ty_arg {
             Some(ty) => {
-                let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, ty);
+                let resolved = vm_state.instantiate_callsite_ty(checkpoint, ty);
                 vm_state.align_sym_read(resolved)
             }
             None => Int::from_u64(vm_state.z3_ctx, 1),
@@ -349,51 +349,6 @@ impl PropertyChecker {
         }
     }
 
-    /// Whether `value` is known to be aligned: either `align_n` carries a
-    /// concrete alignment, or the value sits at the base of an allocation whose
-    /// `align` is not 1.
-    fn is_value_aligned<'z3, 'tcx>(
-        vm_state: &VmState<'z3, 'tcx>,
-        value: &VmValue<'z3, 'tcx>,
-    ) -> bool {
-        value.facts.align_n.is_some()
-            || value.provenance.as_ref().is_some_and(|p| {
-                p.offset_kind.is_none()
-                    && vm_state.alloc(p.alloc_id).align.simplify().as_u64() != Some(1)
-            })
-    }
-
-    /// Whether `value` is a `MaybeUninit`-typed pointer access into `alloc_id`.
-    ///
-    /// `assume_init_drop` / `as_mut_ptr` (and friends) legitimately consume an
-    /// initialized element from storage that may be going out of scope, so the
-    /// `Init`/`Allocated` requirement concerns the write, not the allocation's
-    /// live/dead flag.
-    fn is_maybe_uninit_ptr<'z3, 'tcx>(
-        vm_state: &VmState<'z3, 'tcx>,
-        value: &VmValue<'z3, 'tcx>,
-        alloc_id: AllocId,
-    ) -> bool {
-        value.facts.init
-            && value.facts.non_null
-            && Self::is_value_aligned(vm_state, value)
-            && (matches!(value.ty.kind(), TyKind::RawPtr(..))
-                || matches!(value.ty.kind(), TyKind::Ref(_, inner, _)
-                    if matches!(inner.kind(), TyKind::Adt(adt, _)
-                        if api_classify::is_maybe_uninit_type(adt.did()))))
-            && {
-                let a = vm_state.alloc(alloc_id);
-                !a.is_external()
-                    && a.element_ty.as_ty().is_some_and(|ty| {
-                        if let TyKind::Adt(adt, _) = ty.kind() {
-                            api_classify::is_maybe_uninit_type(adt.did())
-                        } else {
-                            false
-                        }
-                    })
-            }
-    }
-
     pub(super) fn check_allocated<'z3, 'tcx>(
         &self,
         vm_state: &VmState<'z3, 'tcx>,
@@ -403,7 +358,7 @@ impl PropertyChecker {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
-        let value = self.resolve_pointer_provenance(vm_state, value);
+        let value = vm_state.resolve_pointer_provenance(value);
 
         if self.zst_guard(vm_state, checkpoint, property) {
             return CheckResult::ProvedByRule;
@@ -433,7 +388,7 @@ impl PropertyChecker {
         };
 
         if vm_state.alloc(alloc_id).facts.dead {
-            if !Self::is_maybe_uninit_ptr(vm_state, &value, alloc_id) {
+            if !vm_state.is_maybe_uninit_ptr(&value, alloc_id) {
                 let is_param_ref = vm_state.resolve_origin(&value).is_some_and(|origin| {
                     origin.local.as_usize() <= vm_state.body().arg_count
                         && origin.local != Local::from_usize(0)
@@ -454,7 +409,7 @@ impl PropertyChecker {
                     None
                 }
             })
-            .map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
+            .map(|ty| vm_state.instantiate_callsite_ty(checkpoint, ty));
 
         if let Some(required_ty) = required_ty.map(|ty| {
             if matches!(ty.kind(), TyKind::Alias(..)) {
@@ -480,7 +435,7 @@ impl PropertyChecker {
         // (whose provenance names the container allocation) satisfies
         // `Allocated(cur, T, n)`.
         if let Some((t, n)) = &vm_state.alloc(alloc_id).facts.for_each.allocated {
-            let resolved_t = self.instantiate_callsite_ty(vm_state, checkpoint, *t);
+            let resolved_t = vm_state.instantiate_callsite_ty(checkpoint, *t);
             if Some(resolved_t) == required_ty {
                 let req_count = property
                     .args()
@@ -713,13 +668,13 @@ impl PropertyChecker {
         // `ty_is_maybe_uninit` fast-path in `check_typed`; this is what lets a
         // `&[MaybeUninit<T>]` slice satisfy `Init` without its contents being
         // initialized.
-        if let Some(required_ty) = Self::ty_arg(property, 1)
+        if let Some(required_ty) = property.ty_arg(1)
             && Self::ty_is_maybe_uninit(required_ty) {
                 return CheckResult::ProvedByRule;
             }
 
         let access = self.access_bytes(vm_state, property, 1, 2, checkpoint, &value);
-        let requested_ty = Self::ty_arg(property, 1).and_then(|ty| {
+        let requested_ty = property.ty_arg(1).and_then(|ty| {
             if !matches!(ty.kind(), TyKind::Param(_)) {
                 return Some(ty);
             }
@@ -747,7 +702,7 @@ impl PropertyChecker {
                 // may be going out of scope; the `Init` requirement concerns
                 // whether the element was written, not whether the allocation is
                 // still live. Mirror the `check_allocated` exception.
-                if !Self::is_maybe_uninit_ptr(vm_state, &value, id) {
+                if !vm_state.is_maybe_uninit_ptr(&value, id) {
                     return CheckResult::Failed;
                 }
             }
@@ -805,7 +760,7 @@ impl PropertyChecker {
             if value.facts.init
                 && !backing_maybe_uninit
                 && value.facts.non_null
-                && Self::is_value_aligned(vm_state, &value)
+                && vm_state.is_value_aligned(&value)
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
                 && !vm_state.alloc(id).facts.dead
                 && crate::verify::api_classify::is_mem_copy_or_write(checkpoint.callee) {
@@ -894,12 +849,13 @@ impl PropertyChecker {
                             _ => None,
                         };
                         if let Some(src) = src_local
-                            && visited.insert(src) {
-                                if let Some(id) = vm_state.current_frame.local_alloc.get(&src) {
-                                    result.push(*id);
-                                }
-                                worklist.push(src);
+                            && visited.insert(src)
+                        {
+                            if let Some(id) = vm_state.current_frame.local_alloc.get(&src) {
+                                result.push(*id);
                             }
+                            worklist.push(src);
+                        }
                     }
                 }
             }

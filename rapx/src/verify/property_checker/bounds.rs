@@ -817,7 +817,7 @@ impl PropertyChecker {
             (count, ContractExpr::SizeOf(ty)) => (*ty, count),
             _ => return false,
         };
-        let resolved_ty = self.instantiate_callsite_ty(vm_state, checkpoint, size_ty);
+        let resolved_ty = vm_state.instantiate_callsite_ty(checkpoint, size_ty);
         self.count_derives_from_slice_param(vm_state, checkpoint, count_expr, resolved_ty)
     }
 
@@ -880,7 +880,7 @@ impl PropertyChecker {
         };
         match inner.kind() {
             rustc_middle::ty::TyKind::Slice(slice_elem) => {
-                let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, *slice_elem);
+                let resolved = vm_state.instantiate_callsite_ty(checkpoint, *slice_elem);
                 self.same_erased_ty(vm_state, resolved, elem_ty)
             }
             _ => false,
@@ -898,18 +898,5 @@ impl PropertyChecker {
             && vm_state.size_of_ty(a) == vm_state.size_of_ty(b)
     }
 
-    pub(super) fn is_caller_type_param<'z3, 'tcx>(
-        &self,
-        vm_state: &VmState<'z3, 'tcx>,
-        ty: Ty<'tcx>,
-    ) -> bool {
-        let rustc_middle::ty::TyKind::Param(param_ty) = ty.kind() else {
-            return false;
-        };
-        let generics = vm_state.tcx.generics_of(vm_state.current_frame.current_def_id);
-        generics.own_params.iter().any(|p| {
-            matches!(p.kind, rustc_middle::ty::GenericParamDefKind::Type { .. })
-                && p.name == param_ty.name
-        })
-    }
+
 }

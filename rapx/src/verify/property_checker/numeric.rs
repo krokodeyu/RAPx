@@ -4,9 +4,7 @@
 //! `assert_all` plus Euclidean-division (NIA) axioms injected for both the
 //! contract expression and the VM's computed terms.
 
-use crate::verify::api_classify;
 use crate::helpers::def_use::PlaceKey;
-use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
@@ -50,7 +48,7 @@ impl PropertyChecker {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
-        let ty = Self::ty_arg(property, 1);
+        let ty = property.ty_arg(1);
         if let Some(ty) = ty {
             let size_bits = vm_state.size_of_ty(ty) * 8;
             if size_bits > 0 && size_bits < 128 {
@@ -111,7 +109,7 @@ impl PropertyChecker {
         let ck = checkpoint?;
         let op: Option<&Operand<'tcx>> = match cp.base {
             PlaceBase::Arg(n) => ck.args.get(n),
-            PlaceBase::Local(n) => super::util::local_param_operand(vm_state, ck, n),
+            PlaceBase::Local(n) => vm_state.callsite_operand_for_local(ck, n),
             _ => None,
         };
         let op = op?;
@@ -137,15 +135,12 @@ impl PropertyChecker {
             ),
         };
         let rhs = self.eval_contract_expr(vm_state, checkpoint, &pred.rhs)?;
-        let condition = match pred.op {
-            RelOp::Le => lhs.le(&rhs),
-            RelOp::Lt if is_range => lhs.le(&rhs),
-            RelOp::Lt => lhs.lt(&rhs),
-            RelOp::Ge => lhs.ge(&rhs),
-            RelOp::Gt => lhs.gt(&rhs),
-            RelOp::Eq => lhs._eq(&rhs),
-            RelOp::Ne => lhs._eq(&rhs).not(),
+        let op = if is_range && matches!(pred.op, RelOp::Lt) {
+            RelOp::Le
+        } else {
+            pred.op
         };
+        let condition = vm_state.contract_relop_bool(op, &lhs, &rhs);
         solver.push();
         vm_state.assert_all(solver);
         // A predicate argument can be a boolean, so it cannot be equated with
@@ -246,7 +241,7 @@ impl PropertyChecker {
     ) {
         match expr {
             ContractExpr::Place(_) => {
-                let Some(v) = self.eval_contract_expr_to_value(vm_state, checkpoint, expr) else {
+                let Some(v) = vm_state.eval_contract_expr_to_value(checkpoint, expr) else {
                     return;
                 };
                 let bits = vm_state.size_of_ty(v.ty) * 8;
@@ -455,66 +450,5 @@ impl PropertyChecker {
             self.inject_div_axioms_for_term(vm_state, solver, &lhs_val.z3_term, depth - 1);
             self.inject_div_axioms_for_term(vm_state, solver, &rhs_val.z3_term, depth - 1);
         }
-    }
-
-    pub(super) fn try_iter_len_from_fields<'z3, 'tcx>(
-        &self,
-        vm_state: &VmState<'z3, 'tcx>,
-        checkpoint: &Checkpoint<'tcx>,
-        expr: &ContractExpr<'tcx>,
-    ) -> Option<Int<'z3>> {
-        use rustc_middle::mir::Place;
-        let ContractExpr::Place(cp) = expr else {
-            return None;
-        };
-        let op: &Operand<'tcx> = match cp.base {
-            PlaceBase::Arg(n) => checkpoint.args.get(n)?,
-            PlaceBase::Local(n) => {
-                let callee = checkpoint.callee?;
-                let idx = mir_utils::callee_param_index_for_local(vm_state.tcx, callee, n)?;
-                checkpoint.args.get(idx)?
-            }
-            _ => return None,
-        };
-        let place: &Place<'tcx> = match op {
-            Operand::Copy(p) | Operand::Move(p) => p,
-            _ => return None,
-        };
-        let local = place.local;
-        let local_val = vm_state.local_value(local)?;
-        let is_iter = match local_val.ty.kind() {
-            TyKind::Ref(_, pointee, _) => match pointee.kind() {
-                TyKind::Adt(adt_def, _) => {
-                    adt_def.did().as_local().is_none()
-                        && api_classify::is_std_iter_or_itermut(adt_def.did())
-                }
-                _ => false,
-            },
-            _ => false,
-        };
-        if !is_iter {
-            return None;
-        }
-        if let (Some(ptr), Some(end)) = (
-            vm_state.field_value(local, &[0]),
-            vm_state.field_value(local, &[1]),
-        ) && let Some(len) = vm_state.iter_len_from_ptrs(ptr, end)
-        {
-            return Some(len);
-        }
-        let target_alloc = local_val.provenance_alloc_id()?;
-        for (scan_local, scan_val) in vm_state.all_local_values() {
-            if scan_val.provenance_alloc_id() != Some(target_alloc) {
-                continue;
-            }
-            if let (Some(ptr), Some(end)) = (
-                vm_state.field_value(scan_local, &[0]),
-                vm_state.field_value(scan_local, &[1]),
-            ) && let Some(len) = vm_state.iter_len_from_ptrs(ptr, end)
-            {
-                return Some(len);
-            }
-        }
-        None
     }
 }

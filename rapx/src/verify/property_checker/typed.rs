@@ -50,9 +50,9 @@ impl PropertyChecker {
                 }
             }
         }
-        let expected = Self::ty_arg(property, 1).or(Some(value_elem_ty));
+        let expected = property.ty_arg(1).or(Some(value_elem_ty));
         if let Some(expected_ty) = expected {
-            let expected_ty = self.instantiate_callsite_ty(vm_state, checkpoint, expected_ty);
+            let expected_ty = vm_state.instantiate_callsite_ty(checkpoint, expected_ty);
 
             // `MaybeUninit<T>` (and slices/arrays of it) carries no validity
             // invariant: any byte pattern is a valid `MaybeUninit<T>`.  A byte
@@ -88,7 +88,7 @@ impl PropertyChecker {
                         return CheckResult::Failed;
                     }
                     if matches!(elem_ty.kind(), TyKind::Param(_)) {
-                        let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, elem_ty);
+                        let resolved = vm_state.instantiate_callsite_ty(checkpoint, elem_ty);
                         if resolved != elem_ty {
                             elem_ty = resolved;
                         }
@@ -259,13 +259,13 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = Self::ty_arg(property, 0) else {
+        let Some(ty) = property.ty_arg(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         // Resolve a generic `T` to the call-site concrete type (e.g. `Box<i32>`
         // for `drop_in_place::<Box<i32>>`), so `Size(T, 0)` is decided rather
         // than left `Unknown` and dragged through `ValidPtr`'s `Size || Deref`.
-        let resolved_ty = self.instantiate_callsite_ty(vm_state, checkpoint, ty);
+        let resolved_ty = vm_state.instantiate_callsite_ty(checkpoint, ty);
 
         match property.args().last() {
             Some(PropertyArg::Ident(id)) if id == "sized" => {
@@ -332,10 +332,10 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = Self::ty_arg(property, 0) else {
+        let Some(ty) = property.ty_arg(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
-        let ty = self.instantiate_callsite_ty(vm_state, checkpoint, ty);
+        let ty = vm_state.instantiate_callsite_ty(checkpoint, ty);
         match self.type_has_no_padding(vm_state, ty) {
             Some(true) => CheckResult::ProvedByRule,
             Some(false) => CheckResult::Failed,
