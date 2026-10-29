@@ -275,12 +275,77 @@ impl PropertyChecker {
             Some(op) => vm_state.value_of_operand(op),
             None => return CheckResult::Unknown(UnknownReason::Unimplemented),
         };
-        let (index_val, is_range) = match index_arg_idx.and_then(|idx| checkpoint.args.get(idx)) {
+        if let Some(index_op) = index_arg_idx.and_then(|idx| checkpoint.args.get(idx)) {
+            let index_val = vm_state.value_of_operand(index_op);
+            if vm_state.index_access_facts.iter().any(|(slice, index, _, _)| {
+                slice.to_string() == slice_val.z3_term.to_string()
+                    && index.to_string() == index_val.z3_term.to_string()
+            }) {
+                return CheckResult::ProvedByRule;
+            }
+        }
+        let (index_val, range_start, is_range, inclusive) = match index_arg_idx.and_then(|idx| checkpoint.args.get(idx)) {
             Some(op) => {
                 if let Some(end_val) = self.extract_range_end(vm_state, op) {
-                    (end_val, true)
+                    let index_ty = vm_state.value_of_operand(op).ty;
+                    let (needs_start, inclusive) = match index_ty.kind() {
+                        TyKind::Adt(def, _) => {
+                            let kind = mir_utils::range_kind(vm_state.tcx, def.did());
+                            (
+                                matches!(kind, mir_utils::RangeKind::Range | mir_utils::RangeKind::RangeInclusive)
+                                    || api_classify::is_index_range(def.did()),
+                                matches!(kind, mir_utils::RangeKind::RangeInclusive),
+                            )
+                        }
+                        _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
+                    };
+                    let start = if needs_start {
+                        match self.extract_range_field(vm_state, op, 0) {
+                            Some(value) => Some(value.z3_term),
+                            None => return CheckResult::Unknown(UnknownReason::Unimplemented),
+                        }
+                    } else {
+                        None
+                    };
+                    (end_val, start, true, inclusive)
                 } else {
-                    (vm_state.value_of_operand(op), false)
+                    let value = vm_state.value_of_operand(op);
+                    match value.ty.kind() {
+                        TyKind::Uint(rustc_middle::ty::UintTy::Usize) => {
+                            (value, None, false, false)
+                        }
+                        TyKind::Adt(def, _) => {
+                            let did = def.did();
+                            let kind = mir_utils::range_kind(vm_state.tcx, did);
+                            if matches!(kind, mir_utils::RangeKind::RangeFrom)
+                                || crate::def_ids::lang_api::matches(
+                                    vm_state.tcx,
+                                    did,
+                                    crate::def_ids::lang_api::LangItem::RangeToInclusive,
+                                )
+                            {
+                                let Some(field) = self.extract_range_field(vm_state, op, 0) else {
+                                    return CheckResult::Unknown(UnknownReason::Unimplemented);
+                                };
+                                let inclusive = !matches!(kind, mir_utils::RangeKind::RangeFrom);
+                                (field, None, true, inclusive)
+                            } else if crate::def_ids::lang_api::matches(
+                                vm_state.tcx,
+                                did,
+                                crate::def_ids::lang_api::LangItem::RangeFull,
+                            ) {
+                                (
+                                    VmValue::new(Int::from_u64(vm_state.z3_ctx, 0), vm_state.tcx.types.usize),
+                                    None,
+                                    true,
+                                    false,
+                                )
+                            } else {
+                                return CheckResult::Unknown(UnknownReason::Unimplemented);
+                            }
+                        }
+                        _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
+                    }
                 }
             }
             None => return CheckResult::Unknown(UnknownReason::Unimplemented),
@@ -305,12 +370,23 @@ impl PropertyChecker {
             });
 
         solver.push();
-        let negated = if is_range {
-            index_val.z3_term.le(&len).not()
+        let valid = if let Some(start) = range_start {
+            let end_valid = if inclusive {
+                index_val.z3_term.lt(&len)
+            } else {
+                index_val.z3_term.le(&len)
+            };
+            Bool::and(vm_state.z3_ctx, &[&start.le(&index_val.z3_term), &end_valid])
+        } else if is_range {
+            if inclusive {
+                index_val.z3_term.lt(&len)
+            } else {
+                index_val.z3_term.le(&len)
+            }
         } else {
-            index_val.z3_term.lt(&len).not()
+            index_val.z3_term.lt(&len)
         };
-        solver.assert(&negated);
+        solver.assert(&valid.not());
         let r = match solver.check() {
             SatResult::Unsat => CheckResult::ProvedBySmt,
             SatResult::Sat => CheckResult::Failed,
@@ -361,15 +437,31 @@ impl PropertyChecker {
             }
             _ => None,
         };
-        let end_idx = end_idx?;
+        self.extract_range_field(vm_state, op, end_idx?.as_usize())
+    }
+
+    fn extract_range_field<'z3, 'tcx>(
+        &self,
+        vm_state: &VmState<'z3, 'tcx>,
+        op: &Operand<'tcx>,
+        field_idx: usize,
+    ) -> Option<VmValue<'z3, 'tcx>> {
+        let place = match op {
+            Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => p,
+            _ => return None,
+        };
+        let range_local = place.local;
+        if let Some(value) = vm_state.field_value(range_local, &[field_idx]) {
+            return Some(value.clone());
+        }
         for block in vm_state.body().basic_blocks.iter() {
             for stmt in &block.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {
                     let (dest, rvalue) = &**assign;
                     if dest.local == range_local && dest.projection.is_empty()
                         && let Rvalue::Aggregate(_kind, operands) = rvalue
-                            && let Some(end_op) = operands.get(end_idx) {
-                                return Some(self.trace_value(vm_state, end_op));
+                            && let Some(field_op) = operands.get(rustc_abi::FieldIdx::from_usize(field_idx)) {
+                                return Some(self.trace_value(vm_state, field_op));
                             }
                 }
             }

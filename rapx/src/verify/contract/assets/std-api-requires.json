@@ -1,60 +1,4 @@
 {
-  "core::alloc::global::GlobalAlloc::alloc": [
-    {
-      "tag": "ValidNum",
-      "args": [
-        "layout.size() != 0"
-      ]
-    }
-  ],
-  "core::alloc::global::GlobalAlloc::realloc": [
-    {
-      "tag": "Allocated",
-      "args": [
-        "ptr",
-        "u8",
-        "layout.size()"
-      ]
-    },
-    {
-      "tag": "Layout",
-      "args": [
-        "ptr",
-        "layout"
-      ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": [
-        "new_size != 0"
-      ]
-    }
-  ],
-  "core::alloc::global::GlobalAlloc::dealloc": [
-    {
-      "tag": "Allocated",
-      "args": [
-        "ptr",
-        "u8",
-        "layout.size()"
-      ]
-    },
-    {
-      "tag": "Layout",
-      "args": [
-        "ptr",
-        "layout"
-      ]
-    }
-  ],
-  "core::alloc::global::GlobalAlloc::alloc_zeroed": [
-    {
-      "tag": "ValidNum",
-      "args": [
-        "layout.size() != 0"
-      ]
-    }
-  ],
   "core::alloc::layout::from_size_align_unchecked": [
     {
       "tag": "ValidNum",
@@ -81,92 +25,6 @@
       "tag": "ValidTraitObj",
       "args": [
         "t"
-      ]
-    }
-  ],
-  "core::alloc::Allocator::grow": [
-    {
-      "tag": "Allocated",
-      "args": [
-        "ptr",
-        "u8",
-        "old_layout.size()"
-      ]
-    },
-    {
-      "tag": "Layout",
-      "args": [
-        "ptr",
-        "old_layout"
-      ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": [
-        "new_layout.size() > old_layout.size()"
-      ]
-    }
-  ],
-  "core::alloc::Allocator::grow_zeroed": [
-    {
-      "tag": "Allocated",
-      "args": [
-        "ptr",
-        "u8",
-        "old_layout.size()"
-      ]
-    },
-    {
-      "tag": "Layout",
-      "args": [
-        "ptr",
-        "old_layout"
-      ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": [
-        "new_layout.size() > old_layout.size()"
-      ]
-    }
-  ],
-  "core::alloc::Allocator::shrink": [
-    {
-      "tag": "Allocated",
-      "args": [
-        "ptr",
-        "u8",
-        "old_layout.size()"
-      ]
-    },
-    {
-      "tag": "Layout",
-      "args": [
-        "ptr",
-        "old_layout"
-      ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": [
-        "new_layout.size() <= old_layout.size()"
-      ]
-    }
-  ],
-  "core::alloc::Allocator::deallocate": [
-    {
-      "tag": "Allocated",
-      "args": [
-        "ptr",
-        "u8",
-        "layout.size()"
-      ]
-    },
-    {
-      "tag": "Layout",
-      "args": [
-        "ptr",
-        "layout"
       ]
     }
   ],
@@ -385,15 +243,6 @@
       ]
     }
   ],
-  "core::convert::num::FloatToInt::to_int_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": [
-        "self",
-        "[Int::MIN, Int::MAX]"
-      ]
-    }
-  ],
   "core::convert::num::to_int_unchecked": [
     {
       "tag": "ValidNum",
@@ -492,22 +341,6 @@
     }
   ],
   "core::iter::range::backward_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": [
-        "start <= end"
-      ]
-    }
-  ],
-  "core::iter::range::Step::forward_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": [
-        "start <= end"
-      ]
-    }
-  ],
-  "core::iter::range::Step::backward_unchecked": [
     {
       "tag": "ValidNum",
       "args": [
@@ -719,29 +552,6 @@
         "src",
         "Dst",
         "1"
-      ]
-    }
-  ],
-  "core::mem::transmutability::TransmuteFrom::transmute": [
-    {
-      "tag": "Align",
-      "args": [
-        "self",
-        "Src"
-      ]
-    },
-    {
-      "tag": "Align",
-      "args": [
-        "self",
-        "Dst"
-      ]
-    },
-    {
-      "tag": "Typed",
-      "args": [
-        "self",
-        "Src"
       ]
     }
   ],
@@ -3745,24 +3555,6 @@
       ]
     }
   ],
-  "core::slice::index::SliceIndex::get_unchecked": [
-    {
-      "tag": "InBound",
-      "args": [
-        "slice",
-        "self"
-      ]
-    }
-  ],
-  "core::slice::index::SliceIndex::get_unchecked_mut": [
-    {
-      "tag": "InBound",
-      "args": [
-        "slice",
-        "self"
-      ]
-    }
-  ],
   "core::slice::get_unchecked_mut": [
     {
       "tag": "InBound",
@@ -5660,14 +5452,6 @@
       ]
     }
   ],
-  "std::os::unix::process::CommandExt::before_exec": [
-    {
-      "tag": "TobeSpecified",
-      "args": [
-        "self"
-      ]
-    }
-  ],
   "std::os::unix::process::pre_exec": [
     {
       "tag": "TobeSpecified",
@@ -5717,14 +5501,6 @@
     }
   ],
   "std::os::fd::net::from_raw_fd": [
-    {
-      "tag": "Opened",
-      "args": [
-        "fd"
-      ]
-    }
-  ],
-  "std::os::fd::raw::FromRawFd::from_raw_fd": [
     {
       "tag": "Opened",
       "args": [

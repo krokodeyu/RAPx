@@ -182,7 +182,7 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
     let rhs = state.value_of_operand(rhs_op);
     // `Offset(ptr, count)` is the MIR lowering of `ptr.add(count)`/`ptr.sub(count)`
     // (via `intrinsics::offset`): pointer arithmetic in *element* units. Model it
-    // with the same stride/provenance/align precision as the `ReturnPointerAdd`
+    // with the same stride/provenance/align precision as pointer addition
     // effect, so inlined pointer arithmetic keeps `ValidPtr`/`Align` dischargeable.
     if op == BinOp::Offset {
         // The *base* operand carries the monomorphized pointee type (e.g. the

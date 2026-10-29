@@ -137,6 +137,16 @@ fn insert_bounds_into_path(path: &str, param_bounds: &FxHashMap<String, Vec<Stri
     result
 }
 
+fn contract_kind_prefix(kind: crate::verify::contract::ContractKind) -> &'static str {
+    use crate::verify::contract::ContractKind;
+    match kind {
+        ContractKind::Precond => "",
+        ContractKind::Hazard => "[hazard] ",
+        ContractKind::Option_ => "[option] ",
+        ContractKind::Postcond => "[postcond] ",
+    }
+}
+
 pub(crate) fn fmt_contract_expanded<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     property: &crate::verify::contract::Property<'tcx>,
@@ -150,7 +160,12 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
     if let Some(origin) = property.origin() {
         let meaning = origin.meaning.as_deref().unwrap_or("");
         return (
-            format!("{}({})", origin.name, origin.args.join(", ")),
+            format!(
+                "{}{}({})",
+                contract_kind_prefix(property.contract_kind()),
+                origin.name,
+                origin.args.join(", ")
+            ),
             meaning.to_string(),
         );
     }
@@ -193,13 +208,7 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
         .origin()
         .map(|o| o.name.clone())
         .unwrap_or_else(|| format!("{:?}", kind));
-    let tag = if property.contract_kind() == crate::verify::contract::ContractKind::Hazard {
-        format!("[hazard] {tag}")
-    } else if property.contract_kind() == crate::verify::contract::ContractKind::Option_ {
-        format!("[option] {tag}")
-    } else {
-        tag
-    };
+    let tag = format!("{}{}", contract_kind_prefix(property.contract_kind()), tag);
     let call = if matches!(kind, PropertyKind::SplitTransmute) {
         let wrapped: Vec<String> = args.iter().map(|a| format!("[{a}]")).collect();
         format!("{tag}({})", wrapped.join(", "))

@@ -307,7 +307,7 @@ type_defs! {
     index_range_types,
 }
 
-/// Resolve a negative-type name (as written in `std-trait-ensures.json`) to its
+/// Resolve a negative-type name (as written in `std-trait.json`) to its
 /// resolved `DefId` set.  Unknown names resolve to an empty set (the checker
 /// then reports `Unknown`).
 pub fn negative_type_defs(name: &str) -> &'static [DefId] {

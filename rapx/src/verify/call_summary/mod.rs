@@ -52,16 +52,7 @@ pub(crate) enum CallEffect {
     SelectUnpredictable,
     /// The return value is a pointer extracted from an aggregate/reference arg.
     ReturnPointerFromArg { arg: usize },
-    /// The return value is `base + offset * stride`.
-    ReturnPointerAdd {
-        base_arg: usize,
-        offset_arg: usize,
-        stride: Option<u64>,
-        /// Whether the result is a *dereferenceable* pointer (its contract
-        /// guarantees strict in-bounds, e.g. `SliceIndex::get_unchecked`), as
-        /// opposed to plain `add` arithmetic whose result may be one-past-end.
-        dereferenceable: bool,
-    },
+    ReturnSliceIndex,
     ReturnWrappingPointerOffset { base_arg: usize, offset_arg: usize },
     ReturnPtrOffsetFrom { ptr_arg: usize, base_arg: usize },
     /// The return value is known to be non-zero.

@@ -11,7 +11,7 @@
 //! `#[rapx::invariant]` annotations) and updated read-only ([`NoInternalMut`]),
 //! exclusively ([`UniInternalMut`]), or under synchronization / atomically
 //! ([`AtomicUpdate`]).  The composition is declared in
-//! `std-trait-ensures.json` + `std-compound-properties.rs`; this module only
+//! `std-trait.json` + `std-compound-properties.rs`; this module only
 //! implements the primitive type-level checks.
 
 use crate::def_ids::lang_api::{self, LangItem};

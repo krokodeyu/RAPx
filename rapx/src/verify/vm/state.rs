@@ -434,6 +434,7 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     /// self` reborrow temp back to the caller's referent.
     pub arg_referents: Vec<Option<Local>>,
     pub path_saved_arg_referents: Vec<Vec<Option<Local>>>,
+    pub path_postconditions: Vec<(DefId, Vec<Option<Local>>)>,
     pub path_saved_deferred_writes: Vec<Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>>,
     /// Field writes through a `&mut` argument collected during
     /// `exec_inline_call`, replayed against the caller's field values after
@@ -687,6 +688,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
 
     pub(crate) active_method_calls: Vec<Option<super::method_cache::MethodSnapshot<'z3, 'tcx>>>,
     pub(crate) method_returns: Vec<super::method_cache::MethodReturn<'z3, 'tcx>>,
+    pub(crate) typed_values: FxHashSet<(AllocId, Int<'z3>, Ty<'tcx>)>,
 
     /// The object space: one [`MemoryUnit`] per allocation, indexed by
     /// `AllocId`.  Each unit carries its shape ([`Allocation`]) and its contents
@@ -723,6 +725,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// an alias hazard only when the checked origin resolves to one of these —
     /// not for every alias, which a single boolean would wrongly license.
     pub(crate) alias_hazard_allocs: FxHashSet<AllocId>,
+    pub(crate) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
@@ -756,6 +759,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             caller_frames: Vec::default(),
             active_method_calls: Vec::default(),
             method_returns: Vec::default(),
+            typed_values: FxHashSet::default(),
             units: Vec::default(),
             inline: InlineCtx::default(),
             unsupported_mir: false,
@@ -769,6 +773,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             callback_may_drop: FxHashSet::default(),
             constraints,
             alias_hazard_allocs: FxHashSet::default(),
+            index_access_facts: Vec::new(),
         }
     }
 
@@ -1249,6 +1254,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         path: Vec<usize>,
         value: VmValue<'z3, 'tcx>,
     ) {
+        let prior_term = self.local_value(local).map(|value| value.z3_term.to_string());
+        self.index_access_facts.retain(|(slice_term, index_term, slice, index)| {
+            *slice != local
+                && *index != local
+                && prior_term.as_ref().is_none_or(|term| {
+                    *term != slice_term.to_string() && *term != index_term.to_string()
+                })
+        });
         if path.is_empty() {
             self.invalidate_indexed_array(local);
             self.invalidate_field_descendants(local, &[]);

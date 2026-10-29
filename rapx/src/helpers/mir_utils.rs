@@ -155,13 +155,6 @@ pub(crate) fn range_kind(tcx: TyCtxt<'_>, def_id: DefId) -> RangeKind {
     }
 }
 
-/// Whether `def_id` is any `core::ops::Range*` struct.
-pub(crate) fn is_range_type(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    !matches!(range_kind(tcx, def_id), RangeKind::Other)
-        || lang_api::matches(tcx, def_id, LangItem::RangeToInclusive)
-        || lang_api::matches(tcx, def_id, LangItem::RangeFull)
-}
-
 /// Resolve a `FnDef(def_id, args)` (already `skip_binder`d by the caller) to
 /// its monomorphized [`Instance`] in `caller`'s post-analysis typing env.
 pub(crate) fn resolve_instance<'tcx>(
@@ -995,23 +988,6 @@ pub fn field_offset_in_bytes<'tcx>(
         }
     }
     0
-}
-
-pub fn destination_stride<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    dest: Option<Local>,
-) -> Option<u64> {
-    let d = dest?;
-    let pointee = pointee_ty(tcx.optimized_mir(caller).local_decls[d].ty)?;
-    let (_, s) = type_layout(tcx, caller, pointee)?;
-    // A generic pointee (`T`) has no concrete size; signal "symbolic stride" by
-    // returning None so the VM supplies the shared `sizeof_T` constant instead
-    // of collapsing it to 0 (which would drop the element offset entirely).
-    if s == 0 && ty_has_type_param(pointee) {
-        return None;
-    }
-    Some(s)
 }
 
 /// Whether `ty` mentions a (type) generic parameter anywhere in its structure,

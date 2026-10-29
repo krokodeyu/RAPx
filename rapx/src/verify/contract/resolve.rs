@@ -232,6 +232,14 @@ pub(crate) fn parse_type<'tcx>(
     expr: &Expr,
     sp: &str,
 ) -> Option<Ty<'tcx>> {
+    if let Expr::Path(path) = expr
+        && path.path.segments.len() == 2
+        && path.path.segments[0].ident == "Self"
+        && path.path.segments[1].ident == "Output"
+    {
+        let output = tcx.fn_sig(def_id).skip_binder().output().skip_binder();
+        return mir_utils::pointee_ty(output);
+    }
     if let Expr::Verbatim(ts) = expr {
         let syn_ty = syn::parse2::<syn::Type>(ts.clone()).ok();
         // A slice type `[T]` (e.g. `ValidTransmute([u8], str)`): resolve the

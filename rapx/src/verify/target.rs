@@ -222,8 +222,8 @@ pub(crate) struct StructTarget<'tcx> {
 ///
 /// Covers two cases, distinguished by whether the trait has methods:
 /// - marker traits (`Send`/`Sync`) carry *type-level* obligations, and
-/// - unsafe traits with methods carry *method-level* `ensures` contracts
-///   (verification deferred).
+/// - unsafe traits with methods carry *method-level* `ensures` contracts.
+#[derive(Clone)]
 pub(crate) struct TraitEnsurance<'tcx> {
     /// The trait being implemented.
     pub def_id: DefId,
@@ -237,9 +237,10 @@ pub(crate) struct TraitEnsurance<'tcx> {
 }
 
 /// What a [`TraitEnsurance`] must verify.
+#[derive(Clone)]
 pub(crate) enum TraitEnsuranceKind<'tcx> {
     /// A marker trait (`Send`/`Sync`, no methods): type-level obligations
-    /// generated from the bundled `std-trait-ensures.json` template.
+    /// generated from the bundled `std-trait.json` template.
     Marker(MarkerTraitKind, Vec<Property<'tcx>>),
     /// An unsafe trait with methods: `ensures` contracts grouped by method name.
     Unsafe(Vec<(String, FnContracts<'tcx>)>),
@@ -717,7 +718,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     /// Builds a function target to verify from a function definition.
-    fn build_function_target(
+    pub(crate) fn build_function_target(
         &mut self,
         def_id: DefId,
         instance: Option<Instance<'tcx>>,
@@ -945,27 +946,23 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         let Some(ref filter) = self.module_filter else {
             return true;
         };
-        let def_path = self.tcx.def_path_str(def_id);
-
-        if def_path == *filter || def_path.starts_with(&format!("{}::", filter)) {
-            return true;
-        }
         let crate_name = self.tcx.crate_name(def_id.krate);
         let crate_prefix = format!("{}::", crate_name.as_str());
-
-        if let Some(inner) = filter.strip_prefix(&crate_prefix)
-            && (def_path == inner || def_path.starts_with(&format!("{}::", inner)))
-        {
-            return true;
-        }
-
-        if let Some(inner) = def_path.strip_prefix(&crate_prefix)
-            && (inner == *filter || inner.starts_with(&format!("{}::", filter)))
-        {
-            return true;
-        }
-
-        false
+        let matches = |path: &str| {
+            path == filter
+                || path.starts_with(&format!("{filter}::"))
+                || filter.strip_prefix(&crate_prefix).is_some_and(|inner| {
+                    path == inner || path.starts_with(&format!("{inner}::"))
+                })
+                || path.strip_prefix(&crate_prefix).is_some_and(|inner| {
+                    inner == filter || inner.starts_with(&format!("{filter}::"))
+                })
+        };
+        matches(&self.tcx.def_path_str(def_id))
+            || (matches!(self.tcx.def_kind(def_id), rustc_hir::def::DefKind::Impl { .. })
+                && self.tcx.impl_opt_trait_ref(def_id).is_some_and(|trait_ref| {
+                    matches(&self.tcx.def_path_str(trait_ref.skip_binder().def_id))
+                }))
     }
 
     pub(crate) fn check_module_filter_result(&self) {
@@ -1291,6 +1288,8 @@ impl<'tcx> PrepareTargets<'tcx> {
     fn log_trait_ensurance(&self, trait_target: &TraitEnsurance<'tcx>) {
         if let Some(self_ty) = trait_target.self_ty_def_id {
             rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
+        } else {
+            rap_info!("  impl: {}", self.tcx.def_path_str(trait_target.impl_def_id));
         }
         let TraitEnsuranceKind::Unsafe(ensures) = &trait_target.kind else {
             return;
@@ -1301,6 +1300,29 @@ impl<'tcx> PrepareTargets<'tcx> {
             rap_info!("  ensures (implementor must satisfy):");
             for (method_name, contracts) in ensures {
                 rap_info!("    fn {}:", method_name);
+                if let Some(method) = self
+                    .tcx
+                    .associated_items(trait_target.def_id)
+                    .in_definition_order()
+                    .find(|item| self.tcx.def_path_str(item.def_id) == *method_name)
+                {
+                    let guards = super::contract::json::query_trait_method_ensures_when(
+                        self.tcx,
+                        method.def_id,
+                    );
+                    if !guards.is_empty() {
+                        rap_info!("      when:");
+                        for property in crate::verify::display::dedup_compound_props(guards.iter()) {
+                            let (call, _) = crate::verify::display::fmt_contract_expanded(
+                                self.tcx,
+                                property,
+                                trait_target.self_ty_def_id,
+                                Some(method.def_id),
+                            );
+                            rap_info!("        - {call}");
+                        }
+                    }
+                }
                 for property in crate::verify::display::dedup_compound_props(contracts.iter()) {
                     let (call, _meaning) = crate::verify::display::fmt_contract_expanded(
                         self.tcx,
@@ -1491,7 +1513,7 @@ fn marker_trait_kind(tcx: TyCtxt<'_>, trait_def_id: DefId) -> Option<MarkerTrait
 }
 
 /// Generate the type-level `ensures` obligations for a marker-trait impl from
-/// the bundled `std-trait-ensures.json` template, substituting `ty:Self` with
+/// the bundled `std-trait.json` template, substituting `ty:Self` with
 /// the implementing type.
 fn build_marker_trait_obligations<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -1521,7 +1543,7 @@ fn build_marker_trait_obligations<'tcx>(
     obligations
 }
 
-/// Build a single type-level obligation from a `std-trait-ensures.json` entry,
+/// Build a single type-level obligation from a `std-trait.json` entry,
 /// substituting `ty:Self` with `self_ty`.  Supports the `any` disjunction and
 /// falls back to named compound properties (`expand_compound`) for tags that are
 /// not built-in primitives.
@@ -1782,53 +1804,54 @@ fn bind_alive_regions<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, property: &mut Pro
     }
 }
 
-/// Parses trait safety contracts from `#[rapx::ensures(...)]` on unsafe trait
-/// methods, grouped by method name.
+/// Collects method `ensures` from trait annotations or the bundled std trait
+/// contracts, grouped by method name.
 fn get_trait_contracts_from_annotation<'tcx>(
     tcx: TyCtxt<'tcx>,
     trait_def_id: DefId,
 ) -> Vec<(String, FnContracts<'tcx>)> {
-    let Some(local_id) = trait_def_id.as_local() else {
-        return Vec::new();
-    };
-
-    let item = tcx.hir_expect_item(local_id);
-
-    let trait_items = {
-        #[cfg(not(rapx_ge_99))]
-        if let ItemKind::Trait(.., items) = &item.kind {
-            items
-        } else {
-            return Vec::new();
-        }
-        #[cfg(rapx_ge_99)]
-        if let ItemKind::Trait { items, .. } = &item.kind {
-            items
-        } else {
-            return Vec::new();
-        }
-    };
-
     let mut ensures: Vec<(String, FnContracts<'tcx>)> = Vec::new();
-
-    for trait_item_id in trait_items.iter() {
-        let trait_item_def_id = trait_item_id.owner_id.to_def_id();
+    for trait_item in tcx.associated_items(trait_def_id).in_definition_order() {
+        let trait_item_def_id = trait_item.def_id;
         let method_name = tcx.def_path_str(trait_item_def_id);
-        let attrs = crate::compat::get_all_attrs(tcx, trait_item_def_id);
-
-        let method_ensures = collect_properties_from_named_attrs(
-            tcx,
-            attrs,
-            trait_item_def_id,
-            "trait ensures",
-            "ensures",
-        );
+        let method_ensures = get_trait_method_ensures(tcx, trait_item_def_id);
 
         if !method_ensures.is_empty() {
             ensures.push((method_name, method_ensures));
         }
     }
 
+    ensures
+}
+
+pub(crate) fn get_trait_method_ensures<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> FnContracts<'tcx> {
+    let trait_item_def_id = tcx
+        .opt_associated_item(def_id)
+        .and_then(|item| item.trait_item_def_id())
+        .unwrap_or(def_id);
+    if tcx.trait_of_assoc(trait_item_def_id).is_none() {
+        return Vec::new();
+    }
+    let mut ensures = if trait_item_def_id.is_local() {
+        collect_properties_from_named_attrs(
+            tcx,
+            crate::compat::get_all_attrs(tcx, trait_item_def_id),
+            trait_item_def_id,
+            "trait ensures",
+            "ensures",
+        )
+    } else {
+        Vec::new()
+    };
+    if ensures.is_empty() {
+        ensures = super::contract::json::query_trait_method_ensures(tcx, def_id);
+    }
+    for property in &mut ensures {
+        property.set_contract_kind(crate::verify::contract::ContractKind::Postcond);
+    }
     ensures
 }
 

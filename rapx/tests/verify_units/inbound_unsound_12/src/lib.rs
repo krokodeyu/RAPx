@@ -11,3 +11,12 @@ pub fn unsound_std_range_missing_end_guard(data: &[u32], start: usize, end: usiz
         0
     }
 }
+
+#[rapx::verify]
+pub fn unsound_std_range_inverted(data: &[u32], start: usize, end: usize) -> usize {
+    if end <= data.len() {
+        unsafe { data.get_unchecked(start..end).len() }
+    } else {
+        0
+    }
+}

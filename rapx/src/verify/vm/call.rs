@@ -266,6 +266,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.record_missing_mir(c);
             }
         }
+        if let Some(callee) = callee
+            && self.local_value(destination).is_some()
+        {
+            self.assert_call_postconditions(callee, &caller_arg_locals, destination);
+        }
         let result = self.local_value(destination).cloned();
         self.finish_method_call(method_call, result.as_ref());
     }

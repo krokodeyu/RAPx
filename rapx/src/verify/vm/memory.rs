@@ -14,11 +14,14 @@ use super::state::{AllocId, AllocKind, Allocation, MemoryContent, MemoryUnit, Pr
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn clear_write_evidence(&mut self, alloc_id: AllocId) {
         let root = self.root_alloc(alloc_id);
-        for id in (0..self.units.len()).map(AllocId) {
-            if self.root_alloc(id) == root {
-                self.units[id.0].content.copied_prefix = None;
-                self.units[id.0].content.facts.written_pointee_ty = None;
-            }
+        let aliases: crate::compat::FxHashSet<_> = (0..self.units.len())
+            .map(AllocId)
+            .filter(|id| self.root_alloc(*id) == root)
+            .collect();
+        self.typed_values.retain(|(id, _, _)| !aliases.contains(id));
+        for id in aliases {
+            self.units[id.0].content.copied_prefix = None;
+            self.units[id.0].content.facts.written_pointee_ty = None;
         }
     }
 
@@ -56,6 +59,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         {
             return false;
         }
+        self.clear_write_evidence(prov.alloc_id);
         let content = self.content_mut(prov.alloc_id);
         content.values.clear();
         content.indexed_elements.clear();
@@ -77,6 +81,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if !self.current_frame.local_alloc.values().any(|id| *id == alloc_id) {
             return;
         }
+        self.clear_write_evidence(alloc_id);
         let content = self.content_mut(alloc_id);
         content.copied_prefix = None;
         content.values.clear();
@@ -114,6 +119,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let Some(path) = self.field_path_at_offset(root_ty, offset, pointee_ty) else {
             return false;
         };
+        self.clear_write_evidence(provenance.alloc_id);
         self.content_mut(provenance.alloc_id).values.retain(|(ty, stored_path), _| {
             *ty == root_ty
                 && !stored_path.starts_with(&path)

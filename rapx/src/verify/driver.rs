@@ -335,6 +335,47 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         report
     }
 
+    pub(crate) fn verify_postconditions(
+        &self,
+        postconditions: &[Property<'tcx>],
+    ) -> VerificationReport<'tcx> {
+        let mut report = VerificationReport::new(self.target.def_id);
+        let guards = crate::verify::contract::json::query_trait_method_ensures_when(
+            self.tcx,
+            self.target.def_id,
+        );
+        let mut entry_facts: Vec<RelevantItem<'tcx>> = self
+            .target
+            .caller_requires
+            .iter()
+            .filter(|property| !matches!(property.kind(), Some(PropertyKind::Unknown)))
+            .map(|property| RelevantItem::ContractFact {
+                property: property.clone(),
+            })
+            .collect();
+        entry_facts.extend(
+            guards
+                .iter()
+                .cloned()
+                .map(|property| RelevantItem::ContractFact { property }),
+        );
+        report.results.extend(self.run_invariant_checks(
+            postconditions,
+            &entry_facts,
+            false,
+            false,
+            "postcond",
+        ));
+        if !guards.is_empty() {
+            for result in &mut report.results {
+                if matches!(result.result, CheckResult::Failed) {
+                    result.result = CheckResult::Unknown(UnknownReason::ConditionalPostcondition);
+                }
+            }
+        }
+        report
+    }
+
     /// Shared core for `verify_struct_invariants` / `verify_type_invariants`:
     /// enumerate the paths to each invariant checkpoint (`build_invariant_trees`)
     /// and check every invariant against every path, producing one
@@ -709,7 +750,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
     fn run(&mut self) {
         crate::verify::contract::compound::register_compound_properties(self.tcx);
 
-        let collector = VerifyTargetCollector::collect_all(
+        let mut collector = VerifyTargetCollector::collect_all(
             self.tcx,
             self.mode,
             self.skip_invariant,
@@ -864,11 +905,11 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             );
         }
 
-        // Emit detected unsafe trait impls (verification deferred)
         let mut unsafe_traits: Vec<_> = collector
             .trait_targets
             .iter()
             .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Unsafe(_)))
+            .cloned()
             .collect();
         unsafe_traits.sort_by_key(|t| self.tcx.def_path_str(t.def_id));
         for trait_target in unsafe_traits {
@@ -883,26 +924,102 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             rap_info!("============================================================");
             if let Some(self_ty) = trait_target.self_ty_def_id {
                 rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
+            } else {
+                rap_info!("  impl: {}", self.tcx.def_path_str(trait_target.impl_def_id));
             }
             if ensures.is_empty() {
                 rap_info!("  ensures: <none>");
             } else {
                 rap_info!("  ensures (implementor must satisfy):");
-                for (method_name, contracts) in ensures {
-                    rap_info!("    fn {}:", method_name);
-                    for property in dedup_compound_props(contracts.iter()) {
-                        rap_info!(
-                            "      - {}",
-                            property.display_for_report(
+                let mut checked_methods = FxHashSet::default();
+                for item in self
+                    .tcx
+                    .associated_items(trait_target.impl_def_id)
+                    .in_definition_order()
+                {
+                    let Some(trait_method) = item.trait_item_def_id() else {
+                        continue;
+                    };
+                    if !ensures
+                        .iter()
+                        .any(|(name, _)| *name == self.tcx.def_path_str(trait_method))
+                    {
+                        continue;
+                    }
+                    checked_methods.insert(self.tcx.def_path_str(trait_method));
+                    let postconditions = crate::verify::target::get_trait_method_ensures(
+                        self.tcx,
+                        item.def_id,
+                    );
+                    rap_info!("    fn {}:", item.name());
+                    let guards = crate::verify::contract::json::query_trait_method_ensures_when(
+                        self.tcx,
+                        item.def_id,
+                    );
+                    if !guards.is_empty() {
+                        rap_info!("      when:");
+                        for property in dedup_compound_props(guards.iter()) {
+                            let (call, _) = fmt_contract_expanded(
                                 self.tcx,
+                                property,
                                 trait_target.self_ty_def_id,
-                                None,
-                            )
+                                Some(item.def_id),
+                            );
+                            rap_info!("        - {call}");
+                        }
+                    }
+                    for property in dedup_compound_props(postconditions.iter()) {
+                        let (call, _) = fmt_contract_expanded(
+                            self.tcx,
+                            property,
+                            trait_target.self_ty_def_id,
+                            Some(item.def_id),
                         );
+                        rap_info!("      - {call}");
+                    }
+                    if postconditions.is_empty() || !self.tcx.is_mir_available(item.def_id) {
+                        rap_warn!("      result: UNKNOWN (contract or MIR unavailable)");
+                        continue;
+                    }
+                    let target = collector.build_function_target(item.def_id, None);
+                    let (_, repeats) = self.repeat_rounds_for_target(&target);
+                    let mut results = Vec::new();
+                    let mut crashed = None;
+                    for repeat in repeats {
+                        let driver = VerifyDriver::new_with_repeat(self.tcx, &target, repeat);
+                        match mir_utils::catch_panic(|| {
+                            driver.verify_postconditions(&postconditions)
+                        }) {
+                            Ok(report) => results.extend(report.results),
+                            Err(message) => {
+                                crashed = Some(message);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(message) = crashed {
+                        rap_warn!("      result: UNKNOWN (verifier crashed: {message})");
+                    } else {
+                        emit_results_and_verdict(self.tcx, &results, false);
                     }
                 }
+                for (method_name, contracts) in ensures {
+                    if checked_methods.contains(method_name) {
+                        continue;
+                    }
+                    rap_info!("    fn {method_name}:");
+                    for property in dedup_compound_props(contracts.iter()) {
+                        let (call, _) = fmt_contract_expanded(
+                            self.tcx,
+                            property,
+                            trait_target.self_ty_def_id,
+                            None,
+                        );
+                        rap_info!("      - {call}");
+                    }
+                    rap_warn!("      result: UNKNOWN (default method body not checked)");
+                }
             }
-            rap_info!("  verification: deferred");
             rap_info!("");
         }
 

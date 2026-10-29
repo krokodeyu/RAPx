@@ -2,8 +2,8 @@
 //!
 //! Three embedded JSON assets provide out-of-the-box contracts: std function
 //! `requires` contracts (`std-api-requires.json`), std type invariants
-//! (`std-type-invariants.json`), and std auto-trait `ensures` obligations
-//! (`std-trait-ensures.json`).  Lookup uses exact, path-stripped, and wildcard
+//! (`std-type-invariants.json`), and std trait contracts (`std-trait.json`).
+//! Lookup uses exact, path-stripped, and wildcard
 //! fallback so trait-method impls and re-exported paths resolve correctly.
 //! Entries are then converted into [`Property`] values via [`entry_to_property`].
 
@@ -72,6 +72,24 @@ pub(crate) enum AnyItem {
     And(Vec<JsonProperty>),
 }
 
+#[derive(Debug, Deserialize)]
+struct StdTraitContracts {
+    #[serde(default)]
+    ensures: Vec<JsonProperty>,
+    #[serde(default)]
+    methods: HashMap<String, StdTraitMethodContracts>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StdTraitMethodContracts {
+    #[serde(default)]
+    requires: Vec<JsonProperty>,
+    #[serde(default)]
+    ensures_when: Vec<JsonProperty>,
+    #[serde(default)]
+    ensures: Vec<JsonProperty>,
+}
+
 /// Looks up backup contracts for a standard-library function by its normalized path.
 /// For trait-method impls, resolves to the trait method's path first so that
 /// all impls share the same contracts.
@@ -87,6 +105,9 @@ pub(crate) fn get_std_contracts_from_json(
 ) -> Option<&'static [JsonProperty]> {
     let lookup_def_id = resolve_trait_method(tcx, def_id);
     let cleaned_path_name = public_def_path(tcx, lookup_def_id);
+    if let Some(entries) = get_std_trait_method_requires(&cleaned_path_name) {
+        return Some(entries);
+    }
     let db = load_std_contracts_json();
 
     if let Some(entries) = db.get(&cleaned_path_name) {
@@ -140,13 +161,63 @@ pub(crate) fn get_std_type_invariants() -> &'static HashMap<String, Vec<JsonProp
     })
 }
 
-/// Lazily loads the std auto-trait `ensures` obligation database.
-fn load_trait_ensures_json() -> &'static HashMap<String, Vec<JsonProperty>> {
-    static TRAIT_ENSURES: OnceLock<HashMap<String, Vec<JsonProperty>>> = OnceLock::new();
-    TRAIT_ENSURES.get_or_init(|| {
-        serde_json::from_str(include_str!("assets/std-trait-ensures.json"))
-            .expect("failed to parse std trait ensures")
+/// Lazily loads std trait contracts and marker-trait obligations.
+fn load_std_trait_json() -> &'static HashMap<String, StdTraitContracts> {
+    static STD_TRAITS: OnceLock<HashMap<String, StdTraitContracts>> = OnceLock::new();
+    STD_TRAITS.get_or_init(|| {
+        serde_json::from_str(include_str!("assets/std-trait.json"))
+            .expect("failed to parse std trait contracts")
     })
+}
+
+fn get_std_trait_method(path: &str) -> Option<&'static StdTraitMethodContracts> {
+    let (trait_path, method_name) = path.rsplit_once("::")?;
+    load_std_trait_json()
+        .get(trait_path)?
+        .methods
+        .get(method_name)
+}
+
+fn get_std_trait_method_requires(path: &str) -> Option<&'static [JsonProperty]> {
+    get_std_trait_method(path).map(|method| method.requires.as_slice())
+}
+
+pub(crate) fn query_trait_method_ensures<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> Vec<Property<'tcx>> {
+    let path = public_def_path(tcx, resolve_trait_method(tcx, def_id));
+    let Some(method) = get_std_trait_method(&path) else {
+        return Vec::new();
+    };
+    let (param_names, _) = crate::helpers::name::parse_signature(tcx, def_id);
+    let has_names = !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
+    method
+        .ensures
+        .iter()
+        .flat_map(|entry| entry_to_property(tcx, def_id, entry, &param_names, has_names))
+        .map(|mut property| {
+            property.set_contract_kind(super::types::ContractKind::Postcond);
+            property
+        })
+        .collect()
+}
+
+pub(crate) fn query_trait_method_ensures_when<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> Vec<Property<'tcx>> {
+    let path = public_def_path(tcx, resolve_trait_method(tcx, def_id));
+    let Some(method) = get_std_trait_method(&path) else {
+        return Vec::new();
+    };
+    let (param_names, _) = crate::helpers::name::parse_signature(tcx, def_id);
+    let has_names = !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
+    method
+        .ensures_when
+        .iter()
+        .flat_map(|entry| entry_to_property(tcx, def_id, entry, &param_names, has_names))
+        .collect()
 }
 
 /// Returns the `ensures` obligation template for a marker trait such as
@@ -158,15 +229,15 @@ fn load_trait_ensures_json() -> &'static HashMap<String, Vec<JsonProperty>> {
 /// Matching falls back to the trait's short name so that `std`/`core` re-exports
 /// (`std::marker::Send` vs `core::marker::Send`) resolve to the same entry.
 pub(crate) fn query_trait_ensures(tcx: TyCtxt<'_>, trait_def_id: DefId) -> Vec<JsonProperty> {
-    let db = load_trait_ensures_json();
+    let db = load_std_trait_json();
     let key = tcx.def_path_str(trait_def_id);
-    if let Some(entries) = db.get(&key) {
-        return entries.clone();
+    if let Some(contracts) = db.get(&key) {
+        return contracts.ensures.clone();
     }
     let short = key.rsplit("::").next().unwrap_or(&key).to_string();
-    for (k, entries) in db.iter() {
+    for (k, contracts) in db.iter() {
         if k.rsplit("::").next() == Some(short.as_str()) {
-            return entries.clone();
+            return contracts.ensures.clone();
         }
     }
     Vec::new()

@@ -1,0 +1,382 @@
+{
+  "core::marker::Send": {
+    "ensures": [
+      {
+        "tag": "ContainNoType",
+        "args": [
+          "ty:Self",
+          "Rc",
+          "Ref",
+          "RefMut",
+          "MutexGuard",
+          "RwLockWriteGuard",
+          "MappedMutexGuard"
+        ]
+      },
+      {
+        "any": [
+          {
+            "tag": "NoRawPtr",
+            "args": [
+              "ty:Self"
+            ]
+          },
+          {
+            "tag": "TamedRawPtr",
+            "args": [
+              "ty:Self"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "core::marker::Sync": {
+    "ensures": [
+      {
+        "tag": "RefSend",
+        "args": [
+          "ty:Self"
+        ]
+      },
+      {
+        "tag": "ContainNoType",
+        "args": [
+          "ty:Self",
+          "Rc",
+          "Cell",
+          "UnsafeCell",
+          "RefCell",
+          "Ref",
+          "RefMut"
+        ]
+      }
+    ]
+  },
+  "core::alloc::global::GlobalAlloc": {
+    "methods": {
+      "alloc": {
+        "requires": [
+          {
+            "tag": "ValidNum",
+            "args": [
+              "layout.size() != 0"
+            ]
+          }
+        ]
+      },
+      "realloc": {
+        "requires": [
+          {
+            "tag": "Allocated",
+            "args": [
+              "ptr",
+              "u8",
+              "layout.size()"
+            ]
+          },
+          {
+            "tag": "Layout",
+            "args": [
+              "ptr",
+              "layout"
+            ]
+          },
+          {
+            "tag": "ValidNum",
+            "args": [
+              "new_size != 0"
+            ]
+          }
+        ]
+      },
+      "dealloc": {
+        "requires": [
+          {
+            "tag": "Allocated",
+            "args": [
+              "ptr",
+              "u8",
+              "layout.size()"
+            ]
+          },
+          {
+            "tag": "Layout",
+            "args": [
+              "ptr",
+              "layout"
+            ]
+          }
+        ]
+      },
+      "alloc_zeroed": {
+        "requires": [
+          {
+            "tag": "ValidNum",
+            "args": [
+              "layout.size() != 0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "core::alloc::Allocator": {
+    "methods": {
+      "grow": {
+        "requires": [
+          {
+            "tag": "Allocated",
+            "args": [
+              "ptr",
+              "u8",
+              "old_layout.size()"
+            ]
+          },
+          {
+            "tag": "Layout",
+            "args": [
+              "ptr",
+              "old_layout"
+            ]
+          },
+          {
+            "tag": "ValidNum",
+            "args": [
+              "new_layout.size() > old_layout.size()"
+            ]
+          }
+        ]
+      },
+      "grow_zeroed": {
+        "requires": [
+          {
+            "tag": "Allocated",
+            "args": [
+              "ptr",
+              "u8",
+              "old_layout.size()"
+            ]
+          },
+          {
+            "tag": "Layout",
+            "args": [
+              "ptr",
+              "old_layout"
+            ]
+          },
+          {
+            "tag": "ValidNum",
+            "args": [
+              "new_layout.size() > old_layout.size()"
+            ]
+          }
+        ]
+      },
+      "shrink": {
+        "requires": [
+          {
+            "tag": "Allocated",
+            "args": [
+              "ptr",
+              "u8",
+              "old_layout.size()"
+            ]
+          },
+          {
+            "tag": "Layout",
+            "args": [
+              "ptr",
+              "old_layout"
+            ]
+          },
+          {
+            "tag": "ValidNum",
+            "args": [
+              "new_layout.size() <= old_layout.size()"
+            ]
+          }
+        ]
+      },
+      "deallocate": {
+        "requires": [
+          {
+            "tag": "Allocated",
+            "args": [
+              "ptr",
+              "u8",
+              "layout.size()"
+            ]
+          },
+          {
+            "tag": "Layout",
+            "args": [
+              "ptr",
+              "layout"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "core::convert::num::FloatToInt": {
+    "methods": {
+      "to_int_unchecked": {
+        "requires": [
+          {
+            "tag": "ValidNum",
+            "args": [
+              "self",
+              "[Int::MIN, Int::MAX]"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "core::iter::range::Step": {
+    "methods": {
+      "forward_unchecked": {
+        "requires": [
+          {
+            "tag": "ValidNum",
+            "args": [
+              "start <= end"
+            ]
+          }
+        ]
+      },
+      "backward_unchecked": {
+        "requires": [
+          {
+            "tag": "ValidNum",
+            "args": [
+              "start <= end"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "core::mem::transmutability::TransmuteFrom": {
+    "methods": {
+      "transmute": {
+        "requires": [
+          {
+            "tag": "Align",
+            "args": [
+              "self",
+              "Src"
+            ]
+          },
+          {
+            "tag": "Align",
+            "args": [
+              "self",
+              "Dst"
+            ]
+          },
+          {
+            "tag": "Typed",
+            "args": [
+              "self",
+              "Src"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "core::slice::index::SliceIndex": {
+    "methods": {
+      "get_unchecked": {
+        "requires": [
+          {
+            "tag": "InBound",
+            "args": [
+              "slice",
+              "self"
+            ]
+          }
+        ],
+        "ensures_when": [
+          { "tag": "Typed", "args": ["slice"] },
+          { "tag": "ValidPtr", "args": ["slice"] },
+          { "tag": "Align", "args": ["slice", "Self::Output"] }
+        ],
+        "ensures": [
+          {
+            "tag": "Typed",
+            "args": ["return"]
+          },
+          {
+            "tag": "ValidPtr",
+            "args": ["return"]
+          },
+          {
+            "tag": "Align",
+            "args": ["return", "Self::Output"]
+          }
+        ]
+      },
+      "get_unchecked_mut": {
+        "requires": [
+          {
+            "tag": "InBound",
+            "args": [
+              "slice",
+              "self"
+            ]
+          }
+        ],
+        "ensures_when": [
+          { "tag": "Typed", "args": ["slice"] },
+          { "tag": "ValidPtr", "args": ["slice"] },
+          { "tag": "Align", "args": ["slice", "Self::Output"] }
+        ],
+        "ensures": [
+          {
+            "tag": "Typed",
+            "args": ["return"]
+          },
+          {
+            "tag": "ValidPtr",
+            "args": ["return"]
+          },
+          {
+            "tag": "Align",
+            "args": ["return", "Self::Output"]
+          }
+        ]
+      }
+    }
+  },
+  "std::os::unix::process::CommandExt": {
+    "methods": {
+      "before_exec": {
+        "requires": [
+          {
+            "tag": "TobeSpecified",
+            "args": [
+              "self"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "std::os::fd::raw::FromRawFd": {
+    "methods": {
+      "from_raw_fd": {
+        "requires": [
+          {
+            "tag": "Opened",
+            "args": [
+              "fd"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

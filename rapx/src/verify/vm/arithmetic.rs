@@ -398,14 +398,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     (base_pointee.kind(), dest_pointee.kind()),
                     (TyKind::Param(_), TyKind::Param(_))
                 );
-                let pointee = if generic_pointer { base_pointee } else { dest_pointee };
+                let pointee = match base_pointee.kind() {
+                    TyKind::Slice(element) => *element,
+                    TyKind::Str => return Int::from_u64(self.z3_ctx, 1),
+                    _ if generic_pointer => base_pointee,
+                    _ => dest_pointee,
+                };
                 self.size_sym(pointee)
             }
         }
     }
 
     /// Model `dest = base.offset(offset)` with element/byte stride and tracked
-    /// provenance (`offset_kind`), shared by the `ReturnPointerAdd` call effect
+    /// provenance (`offset_kind`), shared by call effects
     /// and the inlined `Offset` MIR statement.
     pub(crate) fn apply_pointer_add(
         &mut self,

@@ -78,6 +78,22 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .and_then(|receiver| self.begin_method_call(callee, receiver, Some(Local::from_usize(*arg))))
         });
         self.active_method_calls.push(method_call);
+        let mut locals = arg_locals.iter();
+        let param_count = body
+            .map(|body| body.arg_count)
+            .unwrap_or_else(|| self.tcx.optimized_mir(callee).arg_count);
+        self.inline.path_postconditions.push((
+            callee,
+            (0..param_count)
+                .map(|index| {
+                    if arg_consts.iter().any(|(param, _)| *param == index + 1) {
+                        None
+                    } else {
+                        locals.next().map(|local| Local::from_usize(*local))
+                    }
+                })
+                .collect(),
+        ));
         let arg_referents: Vec<Option<Local>> = arg_locals
             .iter()
             .map(|arg| {
@@ -255,6 +271,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         for (fields, fv) in ret_fields {
             self.set_field_value(Local::from_usize(dest), fields, fv);
+        }
+        if let Some((callee, args)) = self.inline.path_postconditions.pop()
+            && self.local_value(Local::from_usize(dest)).is_some()
+        {
+            self.assert_call_postconditions(callee, &args, Local::from_usize(dest));
         }
         self.finish_method_call(method_call, ret.as_ref());
     }

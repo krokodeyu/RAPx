@@ -19,8 +19,51 @@ use crate::verify::api_classify;
 use crate::helpers::mir_utils;
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn assert_call_postconditions(
+        &mut self,
+        callee: rustc_hir::def_id::DefId,
+        args: &[Option<Local>],
+        destination: Local,
+    ) {
+        let guard = crate::verify::contract::json::query_trait_method_ensures_when(self.tcx, callee);
+        if !guard.is_empty() {
+            let checkpoint = crate::verify::checkpoint::Checkpoint {
+                caller: self.current_frame.current_def_id,
+                callee: Some(callee),
+                block: rustc_middle::mir::BasicBlock::from_usize(0),
+                args: Vec::new(),
+                kind: crate::verify::checkpoint::CheckpointKind::UnsafeCall,
+                destination: Some(destination),
+                is_mut_ref: false,
+                statement_index: 0,
+            };
+            let checker = crate::verify::property_checker::PropertyChecker;
+            for mut property in guard {
+                if !bind_call_property(&mut property, args, destination)
+                    || !checker.check(self, &checkpoint, &property, false).is_proved()
+                {
+                    return;
+                }
+            }
+        }
+        for mut property in crate::verify::target::get_trait_method_ensures(self.tcx, callee) {
+            if bind_call_property(&mut property, args, destination) {
+                property.set_contract_kind(ContractKind::Precond);
+                self.assert_contract_fact(&property);
+            } else {
+                self.record_unsupported(&format!(
+                    "postcondition argument binding for {}",
+                    self.tcx.def_path_str(callee)
+                ));
+            }
+        }
+    }
+
     /// Assert a contract fact as VM state invariants.
     pub(crate) fn assert_contract_fact(&mut self, property: &Property<'tcx>) {
+        if property.contract_kind() == ContractKind::Postcond {
+            return;
+        }
         // Record the allocations named by every `Alias` atom (hazard like
         // `Alias(self, ret)`, or a `Ptr2Ref` precondition like `Alias(self.0)`),
         // so the alias checker discharges only those — not every alias.
@@ -154,6 +197,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             PropertyKind::InBound => {
+                self.record_index_access_fact(property);
                 if property.for_each().is_none()
                     && let Some(val) = self.contract_target_value(property)
                 {
@@ -181,23 +225,28 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             PropertyKind::Typed => {
                 if let Some(val) = self.contract_target_value(property)
-                    && let Some(alloc_id) = val.provenance_alloc_id()
                     && let Some(expected_ty) = Self::ty_arg(property, 1)
+                        .or_else(|| mir_utils::pointee_ty(val.ty))
                 {
-                    if property.for_each().is_some() {
-                        self.alloc_mut(alloc_id).facts.for_each.target_ty = Some(expected_ty);
-                    }
-                    // Only record the type invariant when the allocation
-                    // has no element type yet.  `Init ⇒ Typed` (and other
-                    // typed preconditions) may re-assert `Typed` with a
-                    // *re-numbered* instantiation of the same `T` (e.g.
-                    // `T/#1` vs the `T/#0` used to size the allocation),
-                    // which must not clobber the original element type —
-                    // doing so makes `len()` fall back to the byte size.
-                    if property.for_each().is_none()
-                        && self.alloc(alloc_id).element_ty.is_generic()
-                    {
-                        self.alloc_mut(alloc_id).element_ty = ElementTy::Typed(expected_ty);
+                    if let Some(alloc_id) = val.provenance_alloc_id() {
+                        if property.for_each().is_none()
+                            && property.args().len() <= 2
+                            && let Some(prov) = &val.provenance
+                        {
+                            self.typed_values.insert((
+                                alloc_id,
+                                prov.offset.clone(),
+                                expected_ty,
+                            ));
+                        }
+                        if property.for_each().is_some() {
+                            self.alloc_mut(alloc_id).facts.for_each.target_ty = Some(expected_ty);
+                        }
+                        if property.for_each().is_none()
+                            && self.alloc(alloc_id).element_ty.is_generic()
+                        {
+                            self.alloc_mut(alloc_id).element_ty = ElementTy::Typed(expected_ty);
+                        }
                     }
                 }
             }
@@ -976,14 +1025,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         else {
             return;
         };
-        if let ContractExpr::Place(index_place) = index.as_ref() {
-            let index_local = index_place.base.to_local();
-            if let rustc_middle::ty::TyKind::Adt(adt_def, _) =
-                self.body().local_decls[index_local].ty.kind()
-                && mir_utils::is_range_type(self.tcx, adt_def.did())
-            {
-                return;
-            }
+        let ContractExpr::Place(index_place) = index.as_ref() else {
+            return;
+        };
+        let index_local = index_place.base.to_local();
+        if !matches!(
+            self.body().local_decls[index_local].ty.kind(),
+            rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::Usize)
+        ) {
+            return;
         }
         let slice_local = match slice.as_ref() {
             ContractExpr::Place(cp) => cp.base.try_to_local(),
@@ -1005,6 +1055,35 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         self.constraints.assertions.push(index_term.lt(&len));
+    }
+
+    fn record_index_access_fact(&mut self, property: &Property<'tcx>) {
+        let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
+            property.args().first()
+        else {
+            return;
+        };
+        let (ContractExpr::Place(slice_place), ContractExpr::Place(index_place)) =
+            (slice.as_ref(), index.as_ref())
+        else {
+            return;
+        };
+        if !slice_place.projections.is_empty() || !index_place.projections.is_empty() {
+            return;
+        }
+        let slice_local = slice_place.base.to_local();
+        let index_local = index_place.base.to_local();
+        if let (Some(slice), Some(index)) = (
+            self.local_value(slice_local),
+            self.local_value(index_local),
+        ) {
+            self.index_access_facts.push((
+                slice.z3_term.clone(),
+                index.z3_term.clone(),
+                slice_local,
+                index_local,
+            ));
+        }
     }
 
     /// When a `&T`/`&mut T` reference is created (e.g. via `&*NonNull<T>`), assume
@@ -1269,64 +1348,104 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 }
 
+fn bind_call_property<'tcx>(
+    property: &mut Property<'tcx>,
+    args: &[Option<Local>],
+    destination: Local,
+) -> bool {
+    let mut bound = true;
+    map_property_places(property, &mut |place| {
+        let local = match place.base {
+            PlaceBase::Return | PlaceBase::Local(0) => Some(destination),
+            PlaceBase::Arg(index) => args.get(index).copied().flatten(),
+            PlaceBase::Local(index) => args.get(index - 1).copied().flatten(),
+        };
+        if let Some(local) = local {
+            place.base = PlaceBase::Local(local.as_usize());
+        } else {
+            bound = false;
+        }
+    });
+    bound
+}
+
 /// Rebind every `self` place in a struct invariant to the given MIR local, so
 /// an invariant parsed against the struct's own `self` can be asserted on a
 /// freshly-created reference (`&*NonNull<T>` → `&T`).
 fn rebind_property_place<'tcx>(property: &mut Property<'tcx>, local: Local) {
+    map_property_places(property, &mut |place| {
+        place.base = PlaceBase::Local(local.as_usize());
+    });
+}
+
+fn map_property_places<'tcx>(
+    property: &mut Property<'tcx>,
+    map: &mut impl FnMut(&mut ContractPlace<'tcx>),
+) {
     match property {
         Property::Atom(atom) => {
             for arg in &mut atom.args {
                 match arg {
-                    PropertyArg::Expr(expr) => rebind_expr_place(expr, local),
+                    PropertyArg::Expr(expr) => map_expr_places(expr, map),
                     PropertyArg::Predicates(preds) => {
                         for pred in preds {
-                            rebind_expr_place(&mut pred.lhs, local);
-                            rebind_expr_place(&mut pred.rhs, local);
+                            map_expr_places(&mut pred.lhs, map);
+                            map_expr_places(&mut pred.rhs, map);
                         }
                     }
                     _ => {}
                 }
             }
+            if let Some(place) = &mut atom.for_each {
+                map(place);
+            }
         }
         Property::And(and) => {
             for c in &mut and.conjuncts {
-                rebind_property_place(c, local);
+                map_property_places(c, map);
             }
         }
         Property::Or(or) => {
             for d in &mut or.disjuncts {
-                rebind_property_place(d, local);
+                map_property_places(d, map);
             }
         }
     }
 }
 
-fn rebind_expr_place<'tcx>(expr: &mut ContractExpr<'tcx>, local: Local) {
+fn map_expr_places<'tcx>(
+    expr: &mut ContractExpr<'tcx>,
+    map: &mut impl FnMut(&mut ContractPlace<'tcx>),
+) {
     match expr {
-        ContractExpr::Place(cp) => {
-            cp.base = PlaceBase::Local(local.as_usize());
-        }
+        ContractExpr::Place(cp) => map(cp),
         ContractExpr::Len(inner, _) | ContractExpr::IsEmpty(inner, _) => {
-            rebind_expr_place(inner, local)
+            map_expr_places(inner, map)
         }
         ContractExpr::IndexAccess { slice, index } => {
-            rebind_expr_place(slice, local);
-            rebind_expr_place(index, local);
+            map_expr_places(slice, map);
+            map_expr_places(index, map);
         }
         ContractExpr::Binary { lhs, rhs, .. } => {
-            rebind_expr_place(lhs, local);
-            rebind_expr_place(rhs, local);
+            map_expr_places(lhs, map);
+            map_expr_places(rhs, map);
         }
-        ContractExpr::Unary { expr: inner, .. } => rebind_expr_place(inner, local),
+        ContractExpr::Unary { expr: inner, .. } => map_expr_places(inner, map),
+        ContractExpr::MethodCall { receiver, args, .. } => {
+            map_expr_places(receiver, map);
+            for arg in args {
+                map_expr_places(arg, map);
+            }
+        }
         ContractExpr::If {
             cond,
             then_expr,
             else_expr,
         } => {
-            rebind_expr_place(&mut cond.lhs, local);
-            rebind_expr_place(&mut cond.rhs, local);
-            rebind_expr_place(then_expr, local);
-            rebind_expr_place(else_expr, local);
+            map_expr_places(&mut cond.lhs, map);
+            map_expr_places(&mut cond.rhs, map);
+            map_expr_places(then_expr, map);
+            map_expr_places(else_expr, map);
         }
         _ => {}
     }

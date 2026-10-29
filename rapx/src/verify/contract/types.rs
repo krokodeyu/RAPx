@@ -277,6 +277,7 @@ pub(crate) enum ContractKind {
     Precond,
     Hazard,
     Option_,
+    Postcond,
 }
 
 /// Display metadata for a property expanded from a compound property
@@ -509,6 +510,7 @@ impl<'tcx> Property<'tcx> {
         match kind {
             Some("hazard") => *target = ContractKind::Hazard,
             Some("option") => *target = ContractKind::Option_,
+            Some("postcond") => *target = ContractKind::Postcond,
             _ => {}
         }
     }

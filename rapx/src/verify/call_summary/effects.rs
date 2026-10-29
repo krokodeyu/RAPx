@@ -10,7 +10,7 @@ use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use super::{BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp};
 use crate::def_ids::other_api;
 use crate::def_ids::{intrinsic_api, nomir_api};
-use crate::helpers::mir_utils::{destination_stride, pointee_alignment, pointee_ty, type_layout};
+use crate::helpers::mir_utils::{pointee_alignment, pointee_ty, type_layout};
 use crate::verify::api_classify;
 
 // ── Context for effect builders ────────────────────────────────────────
@@ -77,8 +77,6 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_box_alloc_ctor, eff_box_alloc),
     ED!(api_classify::is_exchange_malloc, eff_exchange_malloc),
     ED!(api_classify::is_vec_from_box, eff_vec_from_box),
-    // `slice::to_vec` copies the slice; model like `into_vec` so
-    // `String::from(&str)`'s Vec buffer gets provenance.
     ED!(nomir_api::is_slice_to_vec, eff_vec_from_box),
     ED!(api_classify::is_vec_with_capacity, eff_new_allocation_from_cap),
     ED!(api_classify::is_into_boxed_slice, eff_box_from_vec),
@@ -189,20 +187,11 @@ fn eff_alias_ptr(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnPointerFromArg { arg: 0 }]
 }
 
-/// `SliceIndex::get_unchecked(self, slice)` / `get_unchecked_mut`: returns an
-/// element pointer at `slice + self` (receiver is the index, slice pointer is
-/// argument 1). Element-strided add off argument 1, inheriting non-nullness
-/// from the slice.
 fn eff_sliceindex_get_unchecked(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     if !dest_is_pointer(ctx.tcx, ctx.caller, ctx.dest) {
         return Vec::new();
     }
-    vec![CallEffect::ReturnPointerAdd {
-        base_arg: 1,
-        offset_arg: 0,
-        stride: destination_stride(ctx.tcx, ctx.caller, ctx.dest),
-        dereferenceable: true,
-    }]
+    vec![CallEffect::ReturnSliceIndex]
 }
 
 fn eff_alias_arg0(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

@@ -135,6 +135,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     fn forget_memory_values(&mut self, alloc_id: AllocId) {
         let root = self.root_alloc(alloc_id);
+        self.clear_write_evidence(root);
         let aliases: Vec<_> = (0..self.units.len())
             .map(AllocId)
             .filter(|id| self.root_alloc(*id) == root)
@@ -640,15 +641,39 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.set_local(dest, val);
                 }
             }
-            CallEffect::ReturnPointerAdd {
-                base_arg,
-                offset_arg,
-                stride,
-                dereferenceable,
-            } => {
-                if let (Some(base), Some(offset)) = (args.get(*base_arg), args.get(*offset_arg)) {
-                    self.apply_pointer_add(dest, base, offset, *stride, *dereferenceable);
+            CallEffect::ReturnSliceIndex => {
+                let (Some(index), Some(base)) = (args.first(), args.get(1)) else {
+                    return;
+                };
+                let index_local = caller_arg_locals.first().copied().flatten();
+                let start_field = || {
+                    index_local.and_then(|local| {
+                        self.field_value(local, &[0]).map(|value| value.z3_term.clone())
+                    })
+                };
+                let start = match index.ty.kind() {
+                    TyKind::Uint(rustc_middle::ty::UintTy::Usize) => Some(index.z3_term.clone()),
+                    TyKind::Adt(def, _) => match mir_utils::range_kind(self.tcx, def.did()) {
+                        mir_utils::RangeKind::RangeTo => Some(Int::from_u64(self.z3_ctx, 0)),
+                        mir_utils::RangeKind::RangeFrom
+                        | mir_utils::RangeKind::Range
+                        | mir_utils::RangeKind::RangeInclusive => start_field(),
+                        mir_utils::RangeKind::Other => {
+                            use crate::def_ids::lang_api::{self, LangItem};
+                            if api_classify::is_index_range(def.did()) {
+                                start_field()
+                            } else {
+                                (lang_api::matches(self.tcx, def.did(), LangItem::RangeToInclusive)
+                                    || lang_api::matches(self.tcx, def.did(), LangItem::RangeFull))
+                                .then(|| Int::from_u64(self.z3_ctx, 0))
+                            }
+                        }
+                    },
+                    _ => None,
                 }
+                .unwrap_or_else(|| self.fresh_int("slice_index_start"));
+                let offset = VmValue::new(start, self.tcx.types.usize);
+                self.apply_pointer_add(dest, base, &offset, None, base.facts.in_bounds);
             }
             CallEffect::ReturnWrappingPointerOffset {
                 base_arg,

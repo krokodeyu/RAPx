@@ -65,6 +65,16 @@ impl PropertyChecker {
             }
 
             if let Some(alloc_id) = value.provenance_alloc_id() {
+                if property.args().len() <= 2
+                    && value.provenance.as_ref().is_some_and(|prov| {
+                    vm_state.typed_values.contains(&(
+                        alloc_id,
+                        prov.offset.clone(),
+                        expected_ty,
+                    ))
+                }) {
+                    return CheckResult::ProvedByRule;
+                }
                 let alloc = vm_state.alloc(alloc_id);
                 if let Some(mut elem_ty) = alloc.element_ty.as_ty() {
                     elem_ty = self.resolve_ty_params(vm_state, checkpoint, elem_ty);

@@ -242,6 +242,7 @@ unsound_tests! {
     inbound_unsound_10: "verify_units/inbound_unsound_10" => "unsound_scalar_index_wrong_guard" => "InBound",
     inbound_unsound_11: "verify_units/inbound_unsound_11" => "unsound_range_index_missing_end_guard" => "InBound",
     inbound_unsound_12: "verify_units/inbound_unsound_12" => "unsound_std_range_missing_end_guard" => "InBound",
+    inbound_unsound_inverted_range: "verify_units/inbound_unsound_12" => "unsound_std_range_inverted" => "InBound",
 }
 
 #[test]
@@ -1013,7 +1014,7 @@ fn trait_unsound_prepare() {
     assert_contain(&output, "prepare targets for unsafe trait: Buffer");
     assert_contain(&output, "impl for: VecBuf");
     assert_contain(&output, "ensures");
-    assert_contain(&output, "NonNull");
+    assert_contain(&output, "[postcond] NonNull(return)");
 }
 
 #[test]
@@ -1023,7 +1024,29 @@ fn trait_unsound_verify() {
     assert_contain(&output, "impl for: VecBuf");
     assert_contain(&output, "ensures");
     assert_contain(&output, "NonNull");
-    assert_contain(&output, "verification: deferred");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn trait_method_postcond_verify() {
+    let output = run_with_args("verify_units/trait_method_postcond_01", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "call_bad_index", "SOUND");
+    assert_function_result(&output, "call_generic_index", "SOUND");
+    let good = output
+        .split("impl for: GoodIndex")
+        .nth(1)
+        .expect("missing GoodIndex impl target")
+        .split("[rapx::verify] unsafe trait impl")
+        .next()
+        .unwrap();
+    let bad = output
+        .split("impl for: BadIndex")
+        .nth(1)
+        .expect("missing BadIndex impl target");
+    assert_contain(good, "NonNull | Proved");
+    assert_contain(good, "result: SOUND");
+    assert_contain(bad, "NonNull | Failed");
+    assert_contain(bad, "result: UNSOUND");
 }
 
 // Trait Object Inline
