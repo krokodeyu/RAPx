@@ -1062,6 +1062,12 @@ fn trait_method_postcond_verify() {
     assert_contain(good_offset, "result: SOUND");
     assert_contain(bad_offset, "SliceOffset | Failed");
     assert_contain(bad_offset, "result: UNSOUND");
+    let bad_range_length = output
+        .split("impl for: BadRangeLength")
+        .nth(1)
+        .expect("missing BadRangeLength impl target");
+    assert_contain(bad_range_length, "SliceOffset | Unknown");
+    assert_contain(bad_range_length, "result: UNKNOWN");
 }
 
 // Trait Object Inline

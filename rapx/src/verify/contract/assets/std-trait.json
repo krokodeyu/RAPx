@@ -300,8 +300,7 @@
           }
         ],
         "ensures": [
-          { "tag": "SliceOffset", "args": ["return", "slice", "self"] },
-          { "tag": "InBound", "args": ["return", "Self::Output"] }
+          { "tag": "SliceOffset", "args": ["return", "slice", "self"] }
         ]
       },
       "get_unchecked_mut": {
@@ -315,8 +314,7 @@
           }
         ],
         "ensures": [
-          { "tag": "SliceOffset", "args": ["return", "slice", "self"] },
-          { "tag": "InBound", "args": ["return", "Self::Output"] }
+          { "tag": "SliceOffset", "args": ["return", "slice", "self"] }
         ]
       }
     }

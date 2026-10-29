@@ -68,7 +68,7 @@ static SPECS: &[PropertySpec] = &[
         PropertyKind::SliceOffset,
         &[&[Target, Target, Target]],
         ContractKind::Postcond,
-        "{0} is a pointer derived from {1} at the offset selected by {2}",
+        "addr({0}) = addr({1}) + start({2}) * size_of_element({1})",
     ),
     ps(
         "Null",

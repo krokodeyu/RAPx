@@ -45,6 +45,41 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
+    pub(crate) fn slice_index_output_len(
+        &self,
+        base: &VmValue<'z3, 'tcx>,
+        index: &VmValue<'z3, 'tcx>,
+        index_local: Local,
+    ) -> Option<Int<'z3>> {
+        let TyKind::Adt(def, _) = index.ty.kind() else {
+            return None;
+        };
+        let start = self.slice_index_start(index, index_local)?;
+        let one = Int::from_u64(self.z3_ctx, 1);
+        let end = match mir_utils::range_kind(self.tcx, def.did()) {
+            mir_utils::RangeKind::Range => self.field_value(index_local, &[1])?.z3_term.clone(),
+            mir_utils::RangeKind::RangeInclusive => {
+                self.field_value(index_local, &[1])?.z3_term.clone() + &one
+            }
+            mir_utils::RangeKind::RangeTo => self.field_value(index_local, &[0])?.z3_term.clone(),
+            mir_utils::RangeKind::RangeFrom => self.slice_len_from_value(base)?,
+            mir_utils::RangeKind::Other if api_classify::is_index_range(def.did()) => {
+                self.field_value(index_local, &[1])?.z3_term.clone()
+            }
+            mir_utils::RangeKind::Other => {
+                use crate::def_ids::lang_api::{self, LangItem};
+                if lang_api::matches(self.tcx, def.did(), LangItem::RangeToInclusive) {
+                    self.field_value(index_local, &[0])?.z3_term.clone() + &one
+                } else if lang_api::matches(self.tcx, def.did(), LangItem::RangeFull) {
+                    self.slice_len_from_value(base)?
+                } else {
+                    return None;
+                }
+            }
+        };
+        Some(end - &start)
+    }
+
     pub(crate) fn apply_slice_offset(
         &mut self,
         dest: Local,

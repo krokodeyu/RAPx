@@ -25,21 +25,45 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         args: &[Option<Local>],
         destination: Local,
     ) {
-        for mut property in crate::verify::target::get_trait_method_ensures(self.tcx, callee) {
+        let ensures = crate::verify::target::get_trait_method_ensures(self.tcx, callee);
+        if ensures.is_empty() {
+            return;
+        }
+        let bound_index_requires: Vec<(Local, Local)> = if ensures
+            .iter()
+            .any(|property| property.kind() == Some(PropertyKind::SliceOffset))
+        {
+            let mut requires = crate::verify::target::get_trait_method_requires(self.tcx, callee);
+            if requires.is_empty() {
+                requires = crate::verify::contract::json::query_json_contracts(self.tcx, callee);
+            }
+            requires
+                .into_iter()
+                .filter_map(|mut requirement| {
+                    bind_call_property(&mut requirement, args, destination)
+                        .then(|| index_access_locals(&requirement))
+                        .flatten()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for mut property in ensures {
             if bind_call_property(&mut property, args, destination) {
-                if let Property::Atom(atom) = &mut property
-                    && atom.kind == PropertyKind::InBound
-                    && let [PropertyArg::Expr(ContractExpr::Place(place)), PropertyArg::Ty(ty)] =
-                        atom.args.as_mut_slice()
-                    && place.base.to_local() == destination
-                    && matches!(ty.kind(), rustc_middle::ty::TyKind::Alias(..))
-                    && let Some(pointee) =
-                        mir_utils::pointee_ty(self.body().local_decls[destination].ty)
-                {
-                    *ty = pointee;
-                }
+                let bounded_result = slice_offset_locals(&property).is_some_and(|(_, base, index)| {
+                    bound_index_requires.contains(&(base, index))
+                        && self.local_value(base).zip(self.local_value(index)).is_some_and(
+                            |(base_value, index_value)| {
+                                self.slice_index_start(index_value, index).is_some()
+                                    || self.slice_len_from_value(base_value).is_some()
+                            },
+                        )
+                });
                 property.set_contract_kind(ContractKind::Precond);
                 self.assert_contract_fact(&property);
+                if bounded_result {
+                    self.record_bounded_result_span(destination);
+                }
             } else {
                 self.record_unsupported(&format!(
                     "postcondition argument binding for {}",
@@ -151,21 +175,27 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let kind = atom.kind;
         match kind {
             PropertyKind::SliceOffset => {
-                let locals: Option<Vec<Local>> = atom.args.iter().map(|arg| {
-                    let PropertyArg::Expr(ContractExpr::Place(place)) = arg else { return None };
-                    place.projections.is_empty().then(|| place.base.to_local())
-                }).collect();
-                if let Some(locals) = locals
-                    && let [dest, base_local, index_local] = locals.as_slice()
+                if let Some((dest, base_local, index_local)) = slice_offset_locals(property)
                     && let (Some(base), Some(index)) = (
-                        self.local_value(*base_local).cloned(),
-                        self.local_value(*index_local).cloned(),
+                        self.local_value(base_local).cloned(),
+                        self.local_value(index_local).cloned(),
                     )
                 {
-                    let previous = self.local_value(*dest).cloned();
-                    if self.apply_slice_offset(*dest, &base, &index, *index_local) {
-                        if let (Some(previous), Some(expected)) = (previous, self.local_value(*dest)) {
+                    let previous = self.local_value(dest).cloned();
+                    if self.apply_slice_offset(dest, &base, &index, index_local) {
+                        if let (Some(previous), Some(expected)) = (previous, self.local_value(dest)) {
                             self.constraints.assertions.push(previous.z3_term._eq(&expected.z3_term));
+                        }
+                        let indexed_in_bounds = self.index_access_facts.iter().any(
+                            |(slice, index_term, slice_local, indexed_local)| {
+                                *slice_local == base_local
+                                    && *indexed_local == index_local
+                                    && *slice == base.z3_term
+                                    && *index_term == index.z3_term
+                            },
+                        );
+                        if indexed_in_bounds {
+                            self.record_bounded_result_span(dest);
                         }
                     } else {
                         self.record_unsupported("SliceOffset index");
@@ -359,6 +389,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn record_bounded_result_span(&mut self, destination: Local) {
+        if let Some(result) = self.local_value(destination)
+            && let Some(alloc_id) = result.provenance_alloc_id()
+            && let Some(pointee) = mir_utils::pointee_ty(result.ty)
+        {
+            self.bounded_object_spans
+                .push((alloc_id, result.z3_term.clone(), pointee));
         }
     }
 
@@ -1364,6 +1404,33 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         self.alloc_mut(alloc_id).facts.for_each.owning = true;
     }
+}
+
+fn index_access_locals(property: &Property<'_>) -> Option<(Local, Local)> {
+    let Property::Atom(atom) = property else { return None };
+    if atom.kind != PropertyKind::InBound {
+        return None;
+    }
+    let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) = atom.args.first()
+    else { return None };
+    let (ContractExpr::Place(slice), ContractExpr::Place(index)) = (slice.as_ref(), index.as_ref())
+    else { return None };
+    (slice.projections.is_empty() && index.projections.is_empty())
+        .then(|| (slice.base.to_local(), index.base.to_local()))
+}
+
+fn slice_offset_locals(property: &Property<'_>) -> Option<(Local, Local, Local)> {
+    let Property::Atom(atom) = property else { return None };
+    if atom.kind != PropertyKind::SliceOffset {
+        return None;
+    }
+    let locals: Option<Vec<Local>> = atom.args.iter().map(|arg| {
+        let PropertyArg::Expr(ContractExpr::Place(place)) = arg else { return None };
+        place.projections.is_empty().then(|| place.base.to_local())
+    }).collect();
+    let locals = locals?;
+    let [dest, base, index] = locals.as_slice() else { return None };
+    Some((*dest, *base, *index))
 }
 
 fn bind_call_property<'tcx>(

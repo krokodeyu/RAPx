@@ -979,7 +979,10 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 }
 
-fn get_trait_method_requires<'tcx>(tcx: TyCtxt<'tcx>, callee_def_id: DefId) -> FnContracts<'tcx> {
+pub(crate) fn get_trait_method_requires<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    callee_def_id: DefId,
+) -> FnContracts<'tcx> {
     let Some(assoc_item) = tcx.opt_associated_item(callee_def_id) else {
         return Vec::new();
     };

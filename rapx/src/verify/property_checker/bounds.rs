@@ -65,7 +65,24 @@ impl PropertyChecker {
         }
         let solver = Solver::new(vm_state.z3_ctx);
         state.assert_all(&solver);
-        solver.assert(&actual.z3_term._eq(&expected.z3_term).not());
+        let address_wrong = actual.z3_term._eq(&expected.z3_term).not();
+        let output_is_slice = mir_utils::pointee_ty(actual.ty)
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Slice(_) | TyKind::Str));
+        let wrong = if output_is_slice {
+            let (Some(actual_len), Some(expected_len)) = (
+                vm_state.field_value(*dest, &[1]),
+                vm_state.slice_index_output_len(base, index, *index_local),
+            ) else {
+                return CheckResult::Unknown(UnknownReason::Unimplemented);
+            };
+            Bool::or(
+                vm_state.z3_ctx,
+                &[&address_wrong, &actual_len.z3_term._eq(&expected_len).not()],
+            )
+        } else {
+            address_wrong
+        };
+        solver.assert(&wrong);
         match solver.check() {
             SatResult::Unsat => CheckResult::ProvedBySmt,
             SatResult::Sat

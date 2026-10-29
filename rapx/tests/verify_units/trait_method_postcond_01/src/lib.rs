@@ -60,3 +60,18 @@ unsafe impl OffsetIndex for BadOffset {
         slice.cast::<u8>()
     }
 }
+
+unsafe trait RangeOffsetIndex {
+    #[rapx::ensures(SliceOffset(return, slice, index))]
+    unsafe fn offset(index: core::ops::Range<usize>, slice: *const [u8]) -> *const [u8];
+}
+
+pub struct BadRangeLength;
+
+#[rapx::verify]
+unsafe impl RangeOffsetIndex for BadRangeLength {
+    unsafe fn offset(index: core::ops::Range<usize>, slice: *const [u8]) -> *const [u8] {
+        let start = unsafe { slice.cast::<u8>().add(index.start) };
+        core::ptr::slice_from_raw_parts(start, index.end - index.start + 1)
+    }
+}
