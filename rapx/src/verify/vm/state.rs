@@ -726,6 +726,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// not for every alias, which a single boolean would wrongly license.
     pub(crate) alias_hazard_allocs: FxHashSet<AllocId>,
     pub(crate) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
+    pub(crate) bounded_object_spans: Vec<(AllocId, Int<'z3>, Ty<'tcx>)>,
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
@@ -774,6 +775,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             constraints,
             alias_hazard_allocs: FxHashSet::default(),
             index_access_facts: Vec::new(),
+            bounded_object_spans: Vec::new(),
         }
     }
 

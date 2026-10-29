@@ -8,7 +8,7 @@ use crate::verify::checkpoint::Checkpoint;
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 use crate::verify::contract::{
-    ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
+    ContractExpr, ContractKind, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::{OffsetKind, VmState, VmValue};
@@ -22,6 +22,63 @@ use z3::{
 use super::PropertyChecker;
 
 impl PropertyChecker {
+    pub(super) fn check_slice_offset<'z3, 'tcx>(
+        &self,
+        vm_state: &VmState<'z3, 'tcx>,
+        _checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let locals: Option<Vec<Local>> = property.args().iter().map(|arg| {
+            let PropertyArg::Expr(ContractExpr::Place(place)) = arg else { return None };
+            place.projections.is_empty().then(|| place.base.to_local())
+        }).collect();
+        let Some(locals) = locals else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        let [dest, base_local, index_local] = locals.as_slice() else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        let (Some(actual), Some(base), Some(index)) = (
+            vm_state.local_value(*dest),
+            vm_state.local_value(*base_local),
+            vm_state.local_value(*index_local),
+        ) else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        let exact_start = vm_state.slice_index_start(index, *index_local).is_some();
+        let mut state = vm_state.clone();
+        if !state.apply_slice_offset(*dest, base, index, *index_local) {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        }
+        let Some(expected) = state.local_value(*dest) else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        match (actual.provenance_alloc_id(), expected.provenance_alloc_id()) {
+            (Some(left), Some(right)) if left != right => {
+                return CheckResult::Unknown(UnknownReason::Unimplemented);
+            }
+            (Some(_), Some(_)) => {}
+            _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
+        }
+        if !exact_start {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        }
+        let solver = Solver::new(vm_state.z3_ctx);
+        state.assert_all(&solver);
+        solver.assert(&actual.z3_term._eq(&expected.z3_term).not());
+        match solver.check() {
+            SatResult::Unsat => CheckResult::ProvedBySmt,
+            SatResult::Sat
+                if actual.z3_term == base.z3_term
+                    && matches!(index.ty.kind(), TyKind::Uint(rustc_middle::ty::UintTy::Usize)) =>
+            {
+                CheckResult::Failed
+            }
+            SatResult::Sat => CheckResult::Unknown(UnknownReason::Unimplemented),
+            SatResult::Unknown => CheckResult::Unknown(UnknownReason::from_solver(&solver)),
+        }
+    }
+
     pub(super) fn check_in_bound<'z3, 'tcx>(
         &self,
         vm_state: &VmState<'z3, 'tcx>,
@@ -47,6 +104,24 @@ impl PropertyChecker {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
+        if property.contract_kind() == ContractKind::Postcond
+            && let Some(PropertyArg::Ty(ty)) = property.args().get(1)
+            && matches!(ty.kind(), TyKind::Alias(..) | TyKind::Slice(..) | TyKind::Str)
+        {
+            let concrete_ty = if matches!(ty.kind(), TyKind::Alias(..)) {
+                mir_utils::pointee_ty(value.ty).unwrap_or(*ty)
+            } else {
+                *ty
+            };
+            if let Some(alloc_id) = value.provenance_alloc_id()
+                && vm_state.bounded_object_spans.iter().any(|(id, address, span_ty)| {
+                    *id == alloc_id && *address == value.z3_term && *span_ty == concrete_ty
+                })
+            {
+                return CheckResult::ProvedByRule;
+            }
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        }
         // `in_bounds` records "points at a valid element" (established by a
         // single-element deref/contract), so it only discharges a single-element
         // InBound.  A `count > 1` check still needs the byte-range proof below.

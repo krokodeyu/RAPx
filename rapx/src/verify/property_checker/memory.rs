@@ -456,6 +456,25 @@ impl PropertyChecker {
             })
             .map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
 
+        if let Some(required_ty) = required_ty.map(|ty| {
+            if matches!(ty.kind(), TyKind::Alias(..)) {
+                mir_utils::pointee_ty(value.ty).unwrap_or(ty)
+            } else {
+                ty
+            }
+        })
+            && property
+                .args()
+                .get(2)
+                .and_then(|arg| self.resolve_arg_term(vm_state, checkpoint, arg))
+                .is_none_or(|count| count.simplify().as_u64() == Some(1))
+            && vm_state.bounded_object_spans.iter().any(|(id, address, ty)| {
+                *id == alloc_id && *address == value.z3_term && *ty == required_ty
+            })
+        {
+            return CheckResult::ProvedByRule;
+        }
+
         // `Allocated(container.iter(), T, n)` for_each: every element pointer
         // backs `>= n` `T` elements, so a pointer loaded from the container
         // (whose provenance names the container allocation) satisfies

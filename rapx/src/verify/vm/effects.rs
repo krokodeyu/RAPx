@@ -14,6 +14,69 @@ use crate::verify::api_classify;
 use crate::verify::call_summary::{BoundedArithmeticOp, CallEffect, OverflowOp};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn slice_index_start(
+        &self,
+        index: &VmValue<'z3, 'tcx>,
+        index_local: Local,
+    ) -> Option<Int<'z3>> {
+        let start_field = || {
+            self.field_value(index_local, &[0])
+                .map(|value| value.z3_term.clone())
+        };
+        match index.ty.kind() {
+            TyKind::Uint(rustc_middle::ty::UintTy::Usize) => Some(index.z3_term.clone()),
+            TyKind::Adt(def, _) => match mir_utils::range_kind(self.tcx, def.did()) {
+                mir_utils::RangeKind::RangeTo => Some(Int::from_u64(self.z3_ctx, 0)),
+                mir_utils::RangeKind::RangeFrom
+                | mir_utils::RangeKind::Range
+                | mir_utils::RangeKind::RangeInclusive => start_field(),
+                mir_utils::RangeKind::Other => {
+                    use crate::def_ids::lang_api::{self, LangItem};
+                    if api_classify::is_index_range(def.did()) {
+                        start_field()
+                    } else {
+                        (lang_api::matches(self.tcx, def.did(), LangItem::RangeToInclusive)
+                            || lang_api::matches(self.tcx, def.did(), LangItem::RangeFull))
+                        .then(|| Int::from_u64(self.z3_ctx, 0))
+                    }
+                }
+            },
+            _ => None,
+        }
+    }
+
+    pub(crate) fn apply_slice_offset(
+        &mut self,
+        dest: Local,
+        base: &VmValue<'z3, 'tcx>,
+        index: &VmValue<'z3, 'tcx>,
+        index_local: Local,
+    ) -> bool {
+        let start = if let Some(start) = self.slice_index_start(index, index_local) {
+            start
+        } else {
+            let Some(len) = self.slice_len_from_value(base) else {
+                return false;
+            };
+            let start = self.fresh_int("slice_offset_index");
+            let zero = Int::from_u64(self.z3_ctx, 0);
+            self.constraints.assertions.push(start.ge(&zero));
+            let dest_ty = self.body().local_decls[dest].ty;
+            let is_slice = mir_utils::pointee_ty(dest_ty).is_some_and(|ty| {
+                matches!(ty.kind(), TyKind::Slice(_) | TyKind::Str)
+            });
+            self.constraints.assertions.push(if is_slice {
+                start.le(&len)
+            } else {
+                start.lt(&len)
+            });
+            start
+        };
+        let offset = VmValue::new(start, self.tcx.types.usize);
+        self.apply_pointer_add(dest, base, &offset, None, base.facts.in_bounds);
+        true
+    }
+
     pub(crate) fn copy_memory_values(
         &mut self,
         source: &VmValue<'z3, 'tcx>,
@@ -170,18 +233,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) {
         let ty = self.body().local_decls[dest].ty;
         if !crate::verify::call_summary::callback::supports_result(ty) {
-            self.record_missing_mir(callee);
-            return;
-        }
-        // A concrete closure created in this frame can capture its own locals.
-        // The frame-private assumption below applies only to a callable that
-        // entered this frame as an unresolved generic parameter.
-        let generic_receiver = args.first().is_some_and(|receiver| match receiver.ty.kind() {
-            TyKind::Param(_) => true,
-            TyKind::Ref(_, inner, _) => matches!(inner.kind(), TyKind::Param(_)),
-            _ => false,
-        });
-        if !generic_receiver {
             self.record_missing_mir(callee);
             return;
         }
@@ -640,40 +691,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                     self.set_local(dest, val);
                 }
-            }
-            CallEffect::ReturnSliceIndex => {
-                let (Some(index), Some(base)) = (args.first(), args.get(1)) else {
-                    return;
-                };
-                let index_local = caller_arg_locals.first().copied().flatten();
-                let start_field = || {
-                    index_local.and_then(|local| {
-                        self.field_value(local, &[0]).map(|value| value.z3_term.clone())
-                    })
-                };
-                let start = match index.ty.kind() {
-                    TyKind::Uint(rustc_middle::ty::UintTy::Usize) => Some(index.z3_term.clone()),
-                    TyKind::Adt(def, _) => match mir_utils::range_kind(self.tcx, def.did()) {
-                        mir_utils::RangeKind::RangeTo => Some(Int::from_u64(self.z3_ctx, 0)),
-                        mir_utils::RangeKind::RangeFrom
-                        | mir_utils::RangeKind::Range
-                        | mir_utils::RangeKind::RangeInclusive => start_field(),
-                        mir_utils::RangeKind::Other => {
-                            use crate::def_ids::lang_api::{self, LangItem};
-                            if api_classify::is_index_range(def.did()) {
-                                start_field()
-                            } else {
-                                (lang_api::matches(self.tcx, def.did(), LangItem::RangeToInclusive)
-                                    || lang_api::matches(self.tcx, def.did(), LangItem::RangeFull))
-                                .then(|| Int::from_u64(self.z3_ctx, 0))
-                            }
-                        }
-                    },
-                    _ => None,
-                }
-                .unwrap_or_else(|| self.fresh_int("slice_index_start"));
-                let offset = VmValue::new(start, self.tcx.types.usize);
-                self.apply_pointer_add(dest, base, &offset, None, base.facts.in_bounds);
             }
             CallEffect::ReturnWrappingPointerOffset {
                 base_arg,

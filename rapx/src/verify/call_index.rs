@@ -173,7 +173,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     .is_some();
                 let registry_handled = crate::verify::call_summary::effects::has_registry_entry(Some(
                     base_callee,
-                ));
+                )) || crate::verify::target::has_slice_offset_ensures(self.tcx, base_callee);
                 let resolve_to_impl = !cross_crate || !is_trait_method || !registry_handled;
                 if caller.as_local().is_none() && !(is_trait_method && resolve_to_impl) {
                     continue;
@@ -243,6 +243,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)
                     || crate::verify::call_summary::effects::has_registry_entry(Some(callee))
+                    || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
                     || cross_crate_trait_default
                 {

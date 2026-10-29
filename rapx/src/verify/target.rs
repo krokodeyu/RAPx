@@ -1300,29 +1300,6 @@ impl<'tcx> PrepareTargets<'tcx> {
             rap_info!("  ensures (implementor must satisfy):");
             for (method_name, contracts) in ensures {
                 rap_info!("    fn {}:", method_name);
-                if let Some(method) = self
-                    .tcx
-                    .associated_items(trait_target.def_id)
-                    .in_definition_order()
-                    .find(|item| self.tcx.def_path_str(item.def_id) == *method_name)
-                {
-                    let guards = super::contract::json::query_trait_method_ensures_when(
-                        self.tcx,
-                        method.def_id,
-                    );
-                    if !guards.is_empty() {
-                        rap_info!("      when:");
-                        for property in crate::verify::display::dedup_compound_props(guards.iter()) {
-                            let (call, _) = crate::verify::display::fmt_contract_expanded(
-                                self.tcx,
-                                property,
-                                trait_target.self_ty_def_id,
-                                Some(method.def_id),
-                            );
-                            rap_info!("        - {call}");
-                        }
-                    }
-                }
                 for property in crate::verify::display::dedup_compound_props(contracts.iter()) {
                     let (call, _meaning) = crate::verify::display::fmt_contract_expanded(
                         self.tcx,
@@ -1853,6 +1830,12 @@ pub(crate) fn get_trait_method_ensures<'tcx>(
         property.set_contract_kind(crate::verify::contract::ContractKind::Postcond);
     }
     ensures
+}
+
+pub(crate) fn has_slice_offset_ensures(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    get_trait_method_ensures(tcx, def_id)
+        .iter()
+        .any(|property| property.kind() == Some(crate::verify::contract::PropertyKind::SliceOffset))
 }
 
 /// Build (pseudo-checkpoint, properties) pairs for every raw pointer dereference

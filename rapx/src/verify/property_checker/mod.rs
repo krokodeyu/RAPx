@@ -90,6 +90,11 @@ pub(crate) const PROPERTY_RULES: &[PropertyRule] = &[
         apply: PropertyChecker::check_in_bound,
     },
     PropertyRule {
+        name: "slice_offset",
+        kind: PropertyKind::SliceOffset,
+        apply: PropertyChecker::check_slice_offset,
+    },
+    PropertyRule {
         name: "init",
         kind: PropertyKind::Init,
         apply: PropertyChecker::check_init,

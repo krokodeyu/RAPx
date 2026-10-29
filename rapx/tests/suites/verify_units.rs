@@ -1047,6 +1047,21 @@ fn trait_method_postcond_verify() {
     assert_contain(good, "result: SOUND");
     assert_contain(bad, "NonNull | Failed");
     assert_contain(bad, "result: UNSOUND");
+    let good_offset = output
+        .split("impl for: GoodOffset")
+        .nth(1)
+        .expect("missing GoodOffset impl target")
+        .split("[rapx::verify] unsafe trait impl")
+        .next()
+        .unwrap();
+    let bad_offset = output
+        .split("impl for: BadOffset")
+        .nth(1)
+        .expect("missing BadOffset impl target");
+    assert_contain(good_offset, "SliceOffset | Proved");
+    assert_contain(good_offset, "result: SOUND");
+    assert_contain(bad_offset, "SliceOffset | Failed");
+    assert_contain(bad_offset, "result: UNSOUND");
 }
 
 // Trait Object Inline

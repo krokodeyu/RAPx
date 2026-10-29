@@ -10,7 +10,7 @@ use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use super::{BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp};
 use crate::def_ids::other_api;
 use crate::def_ids::{intrinsic_api, nomir_api};
-use crate::helpers::mir_utils::{pointee_alignment, pointee_ty, type_layout};
+use crate::helpers::mir_utils::{pointee_alignment, type_layout};
 use crate::verify::api_classify;
 
 // ── Context for effect builders ────────────────────────────────────────
@@ -85,7 +85,6 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_checked_next_pow2, eff_return_option_some_nonzero),
     ED!(api_classify::is_str_as_bytes, eff_alias_arg0),
     ED!(api_classify::is_slice_get_unchecked, eff_alias_ptr),
-    ED!(api_classify::is_sliceindex_get_unchecked, eff_sliceindex_get_unchecked),
     ED!(api_classify::is_ownership_reconstruction, eff_ownership_recon),
     ED!(api_classify::is_manually_drop_drop, eff_drop_memory),
     ED!(api_classify::is_std_drop, eff_drop_memory),
@@ -185,13 +184,6 @@ fn eff_select_unpredictable(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_alias_ptr(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnPointerFromArg { arg: 0 }]
-}
-
-fn eff_sliceindex_get_unchecked(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    if !dest_is_pointer(ctx.tcx, ctx.caller, ctx.dest) {
-        return Vec::new();
-    }
-    vec![CallEffect::ReturnSliceIndex]
 }
 
 fn eff_alias_arg0(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -456,11 +448,6 @@ fn eff_range_next(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 // ── Layout helpers (used by effect builders) ─────────────────────────
-
-fn dest_is_pointer(tcx: TyCtxt<'_>, caller: DefId, dest: Option<rustc_middle::mir::Local>) -> bool {
-    let Some(d) = dest else { return false };
-    pointee_ty(tcx.optimized_mir(caller).local_decls[d].ty).is_some()
-}
 
 fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
     mir_utils::fn_def_first_type_arg(func)

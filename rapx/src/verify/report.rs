@@ -29,7 +29,6 @@ pub(crate) enum UnknownReason {
     UnresolvedUnsafeCall,
     MissingContract,
     UnsupportedProperty,
-    ConditionalPostcondition,
     /// A checker cannot resolve a value or supported property shape.
     Unimplemented,
     Multiple(Vec<UnknownReason>),
@@ -58,7 +57,6 @@ impl UnknownReason {
             Self::UnresolvedUnsafeCall => "unresolved unsafe call".to_string(),
             Self::MissingContract => "missing safety contract".to_string(),
             Self::UnsupportedProperty => "unsupported property".to_string(),
-            Self::ConditionalPostcondition => "guarded postcondition not proved".to_string(),
             Self::Unimplemented => "unresolved value or unsupported shape".to_string(),
             Self::Multiple(reasons) => reasons
                 .iter()

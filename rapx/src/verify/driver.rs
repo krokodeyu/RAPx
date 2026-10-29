@@ -340,11 +340,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         postconditions: &[Property<'tcx>],
     ) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
-        let guards = crate::verify::contract::json::query_trait_method_ensures_when(
-            self.tcx,
-            self.target.def_id,
-        );
-        let mut entry_facts: Vec<RelevantItem<'tcx>> = self
+        let entry_facts: Vec<RelevantItem<'tcx>> = self
             .target
             .caller_requires
             .iter()
@@ -353,12 +349,6 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 property: property.clone(),
             })
             .collect();
-        entry_facts.extend(
-            guards
-                .iter()
-                .cloned()
-                .map(|property| RelevantItem::ContractFact { property }),
-        );
         report.results.extend(self.run_invariant_checks(
             postconditions,
             &entry_facts,
@@ -366,13 +356,6 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             false,
             "postcond",
         ));
-        if !guards.is_empty() {
-            for result in &mut report.results {
-                if matches!(result.result, CheckResult::Failed) {
-                    result.result = CheckResult::Unknown(UnknownReason::ConditionalPostcondition);
-                }
-            }
-        }
         report
     }
 
@@ -952,22 +935,6 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                         item.def_id,
                     );
                     rap_info!("    fn {}:", item.name());
-                    let guards = crate::verify::contract::json::query_trait_method_ensures_when(
-                        self.tcx,
-                        item.def_id,
-                    );
-                    if !guards.is_empty() {
-                        rap_info!("      when:");
-                        for property in dedup_compound_props(guards.iter()) {
-                            let (call, _) = fmt_contract_expanded(
-                                self.tcx,
-                                property,
-                                trait_target.self_ty_def_id,
-                                Some(item.def_id),
-                            );
-                            rap_info!("        - {call}");
-                        }
-                    }
                     for property in dedup_compound_props(postconditions.iter()) {
                         let (call, _) = fmt_contract_expanded(
                             self.tcx,

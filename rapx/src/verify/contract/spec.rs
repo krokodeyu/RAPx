@@ -64,6 +64,13 @@ static SPECS: &[PropertySpec] = &[
         "{0} as usize != 0",
     ),
     ps(
+        "SliceOffset",
+        PropertyKind::SliceOffset,
+        &[&[Target, Target, Target]],
+        ContractKind::Postcond,
+        "{0} is a pointer derived from {1} at the offset selected by {2}",
+    ),
+    ps(
         "Null",
         PropertyKind::Null,
         &[&[Target]],

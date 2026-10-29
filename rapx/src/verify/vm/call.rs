@@ -212,7 +212,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
 
         // Registry summary, else the transparent-deref / unknown fallback.
-        let summary = if callee
+        let summary = if callee.is_some_and(|id| {
+            crate::verify::target::has_slice_offset_ensures(self.tcx, id)
+        }) {
+            Some(Vec::new())
+        } else if callee
             .is_some_and(|id| crate::def_ids::other_api::iterator_next_trait_fns().contains(&id))
             && arg_values
                 .first()
@@ -266,9 +270,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.record_missing_mir(c);
             }
         }
-        if let Some(callee) = callee
-            && self.local_value(destination).is_some()
-        {
+        if let Some(callee) = callee {
             self.assert_call_postconditions(callee, &caller_arg_locals, destination);
         }
         let result = self.local_value(destination).cloned();

@@ -38,3 +38,25 @@ pub unsafe fn call_generic_index<I: SliceIndexLike>(index: I, slice: *const [u8]
     let ptr = unsafe { index.get_unchecked(slice) };
     let _ = unsafe { core::ptr::NonNull::new_unchecked(ptr as *mut u8) };
 }
+
+unsafe trait OffsetIndex {
+    #[rapx::ensures(SliceOffset(return, slice, index))]
+    unsafe fn offset(index: usize, slice: *const [u8]) -> *const u8;
+}
+
+pub struct GoodOffset;
+pub struct BadOffset;
+
+#[rapx::verify]
+unsafe impl OffsetIndex for GoodOffset {
+    unsafe fn offset(index: usize, slice: *const [u8]) -> *const u8 {
+        unsafe { slice.cast::<u8>().add(index) }
+    }
+}
+
+#[rapx::verify]
+unsafe impl OffsetIndex for BadOffset {
+    unsafe fn offset(_: usize, slice: *const [u8]) -> *const u8 {
+        slice.cast::<u8>()
+    }
+}

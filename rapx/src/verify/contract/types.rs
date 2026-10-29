@@ -229,6 +229,7 @@ pub(crate) enum PropertyKind {
     NonNull,
     Allocated,
     InBound,
+    SliceOffset,
     NonOverlap,
     ValidNum,
     ValidString,

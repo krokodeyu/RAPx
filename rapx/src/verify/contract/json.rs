@@ -85,8 +85,6 @@ struct StdTraitMethodContracts {
     #[serde(default)]
     requires: Vec<JsonProperty>,
     #[serde(default)]
-    ensures_when: Vec<JsonProperty>,
-    #[serde(default)]
     ensures: Vec<JsonProperty>,
 }
 
@@ -200,23 +198,6 @@ pub(crate) fn query_trait_method_ensures<'tcx>(
             property.set_contract_kind(super::types::ContractKind::Postcond);
             property
         })
-        .collect()
-}
-
-pub(crate) fn query_trait_method_ensures_when<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> Vec<Property<'tcx>> {
-    let path = public_def_path(tcx, resolve_trait_method(tcx, def_id));
-    let Some(method) = get_std_trait_method(&path) else {
-        return Vec::new();
-    };
-    let (param_names, _) = crate::helpers::name::parse_signature(tcx, def_id);
-    let has_names = !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
-    method
-        .ensures_when
-        .iter()
-        .flat_map(|entry| entry_to_property(tcx, def_id, entry, &param_names, has_names))
         .collect()
 }
 

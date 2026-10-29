@@ -97,7 +97,6 @@ struct Methods {
     iter_position: Vec<DefId>,
     slice_get_unchecked: Vec<DefId>,
     slice_get: Vec<DefId>,
-    sliceindex_get_unchecked: Vec<DefId>,
     slice_range_fns: Vec<DefId>,
     range_next: Vec<DefId>,
     iter_next: Vec<DefId>,
@@ -137,7 +136,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         iter_position: Vec::new(),
         slice_get_unchecked: Vec::new(),
         slice_get: Vec::new(),
-        sliceindex_get_unchecked: Vec::new(),
         slice_range_fns: Vec::new(),
         range_next: Vec::new(),
         iter_next: Vec::new(),
@@ -249,11 +247,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                     || name.contains("::<impl *const [T]>::get"))
             {
                 methods.slice_get.push(did);
-            }
-            if (name.contains("::get_unchecked") || name.contains("::get_unchecked_mut"))
-                && name.contains("::SliceIndex")
-            {
-                methods.sliceindex_get_unchecked.push(did);
             }
             if name.ends_with("slice::index::range") || name.ends_with("::slice::range") {
                 methods.slice_range_fns.push(did);
@@ -407,7 +400,6 @@ method_fns! {
     iter_position_fns => iter_position,
     slice_get_unchecked_fns => slice_get_unchecked,
     slice_get_fns => slice_get,
-    sliceindex_get_unchecked_fns => sliceindex_get_unchecked,
     slice_range_fns => slice_range_fns,
     range_next_fns => range_next,
     /// Slice `Iter::next` / `IterMut::next`.

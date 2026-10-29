@@ -52,7 +52,6 @@ pub(crate) enum CallEffect {
     SelectUnpredictable,
     /// The return value is a pointer extracted from an aggregate/reference arg.
     ReturnPointerFromArg { arg: usize },
-    ReturnSliceIndex,
     ReturnWrappingPointerOffset { base_arg: usize, offset_arg: usize },
     ReturnPtrOffsetFrom { ptr_arg: usize, base_arg: usize },
     /// The return value is known to be non-zero.

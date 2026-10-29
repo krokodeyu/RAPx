@@ -299,24 +299,9 @@
             ]
           }
         ],
-        "ensures_when": [
-          { "tag": "Typed", "args": ["slice"] },
-          { "tag": "ValidPtr", "args": ["slice"] },
-          { "tag": "Align", "args": ["slice", "Self::Output"] }
-        ],
         "ensures": [
-          {
-            "tag": "Typed",
-            "args": ["return"]
-          },
-          {
-            "tag": "ValidPtr",
-            "args": ["return"]
-          },
-          {
-            "tag": "Align",
-            "args": ["return", "Self::Output"]
-          }
+          { "tag": "SliceOffset", "args": ["return", "slice", "self"] },
+          { "tag": "InBound", "args": ["return", "Self::Output"] }
         ]
       },
       "get_unchecked_mut": {
@@ -329,24 +314,9 @@
             ]
           }
         ],
-        "ensures_when": [
-          { "tag": "Typed", "args": ["slice"] },
-          { "tag": "ValidPtr", "args": ["slice"] },
-          { "tag": "Align", "args": ["slice", "Self::Output"] }
-        ],
         "ensures": [
-          {
-            "tag": "Typed",
-            "args": ["return"]
-          },
-          {
-            "tag": "ValidPtr",
-            "args": ["return"]
-          },
-          {
-            "tag": "Align",
-            "args": ["return", "Self::Output"]
-          }
+          { "tag": "SliceOffset", "args": ["return", "slice", "self"] },
+          { "tag": "InBound", "args": ["return", "Self::Output"] }
         ]
       }
     }

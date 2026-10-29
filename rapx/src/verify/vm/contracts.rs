@@ -25,29 +25,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         args: &[Option<Local>],
         destination: Local,
     ) {
-        let guard = crate::verify::contract::json::query_trait_method_ensures_when(self.tcx, callee);
-        if !guard.is_empty() {
-            let checkpoint = crate::verify::checkpoint::Checkpoint {
-                caller: self.current_frame.current_def_id,
-                callee: Some(callee),
-                block: rustc_middle::mir::BasicBlock::from_usize(0),
-                args: Vec::new(),
-                kind: crate::verify::checkpoint::CheckpointKind::UnsafeCall,
-                destination: Some(destination),
-                is_mut_ref: false,
-                statement_index: 0,
-            };
-            let checker = crate::verify::property_checker::PropertyChecker;
-            for mut property in guard {
-                if !bind_call_property(&mut property, args, destination)
-                    || !checker.check(self, &checkpoint, &property, false).is_proved()
-                {
-                    return;
-                }
-            }
-        }
         for mut property in crate::verify::target::get_trait_method_ensures(self.tcx, callee) {
             if bind_call_property(&mut property, args, destination) {
+                if let Property::Atom(atom) = &mut property
+                    && atom.kind == PropertyKind::InBound
+                    && let [PropertyArg::Expr(ContractExpr::Place(place)), PropertyArg::Ty(ty)] =
+                        atom.args.as_mut_slice()
+                    && place.base.to_local() == destination
+                    && matches!(ty.kind(), rustc_middle::ty::TyKind::Alias(..))
+                    && let Some(pointee) =
+                        mir_utils::pointee_ty(self.body().local_decls[destination].ty)
+                {
+                    *ty = pointee;
+                }
                 property.set_contract_kind(ContractKind::Precond);
                 self.assert_contract_fact(&property);
             } else {
@@ -160,6 +150,28 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         let kind = atom.kind;
         match kind {
+            PropertyKind::SliceOffset => {
+                let locals: Option<Vec<Local>> = atom.args.iter().map(|arg| {
+                    let PropertyArg::Expr(ContractExpr::Place(place)) = arg else { return None };
+                    place.projections.is_empty().then(|| place.base.to_local())
+                }).collect();
+                if let Some(locals) = locals
+                    && let [dest, base_local, index_local] = locals.as_slice()
+                    && let (Some(base), Some(index)) = (
+                        self.local_value(*base_local).cloned(),
+                        self.local_value(*index_local).cloned(),
+                    )
+                {
+                    let previous = self.local_value(*dest).cloned();
+                    if self.apply_slice_offset(*dest, &base, &index, *index_local) {
+                        if let (Some(previous), Some(expected)) = (previous, self.local_value(*dest)) {
+                            self.constraints.assertions.push(previous.z3_term._eq(&expected.z3_term));
+                        }
+                    } else {
+                        self.record_unsupported("SliceOffset index");
+                    }
+                }
+            }
             PropertyKind::NonNull => {
                 if let Some(val) = self.contract_target_value(property) {
                     self.set_non_null_for_value(property, val);
@@ -201,6 +213,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if property.for_each().is_none()
                     && let Some(val) = self.contract_target_value(property)
                 {
+                    if let (Some(alloc_id), Some(ty)) =
+                        (val.provenance_alloc_id(), Self::ty_arg(property, 1))
+                    {
+                        self.bounded_object_spans
+                            .push((alloc_id, val.z3_term.clone(), ty));
+                    }
                     self.set_in_bounds_for_value(property, val);
                 }
                 if let Some(fe_place) = property.for_each() {
