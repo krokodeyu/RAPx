@@ -207,12 +207,22 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return false;
         }
         let heap_ty = substs.first().and_then(|s| s.as_type()).unwrap_or(ty);
+        let slice_elem = match heap_ty.kind() {
+            TyKind::Slice(elem) if !is_vec && !is_cstring => Some(*elem),
+            _ => None,
+        };
         let heap_size = self.size_of_ty(heap_ty);
-        let heap_align = self.align_sym(heap_ty);
+        let heap_align = self.align_sym(slice_elem.unwrap_or(heap_ty));
         let heap_size_term = Int::from_u64(self.z3_ctx, heap_size.max(1));
         // Vec/CString can hold many elements — use an external allocation so
         // Allocated checks can pass for arbitrary capacity queries.
-        let (heap_alloc_id, heap_base) = if is_vec || is_cstring {
+        let (heap_alloc_id, heap_base) = if let Some(elem) = slice_elem {
+            let len = self.fresh_int(&format!("slice_len_{}", local_idx));
+            let zero = Int::from_u64(self.z3_ctx, 0);
+            self.constraints.assertions.push(len.ge(&zero));
+            let elem_size = self.size_sym(elem);
+            self.allocate_slice(len, elem_size, heap_align, Some(elem))
+        } else if is_vec || is_cstring {
             let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
             self.allocate_external(max_size, heap_align.clone(), Some(heap_ty))
         } else {

@@ -123,6 +123,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let Some(len) = self.try_index_range_len(val) {
             return Some(len);
         }
+        let mut ty = val.ty;
+        while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = ty.kind() {
+            ty = *inner;
+        }
+        if let TyKind::Adt(adt, _) = ty.kind()
+            && api_classify::is_std_vec(adt.did())
+            && let Some(data_id) = self.container_data_alloc(val.provenance_alloc_id()?, val.ty)
+        {
+            return self.slice_len_of_alloc(data_id);
+        }
         self.slice_len_from_value(val)
     }
 

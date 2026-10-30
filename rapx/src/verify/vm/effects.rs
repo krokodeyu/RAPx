@@ -1210,16 +1210,32 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         if let Some(slice_len) = alloc.slice_len().cloned() {
                             return Some(slice_len);
                         }
-                        // A boxed array (`box [T; N]`) has a concrete size but no
-                        // slice length; its element count is `size / elem_size`.
-                        let elem_size = elem_ty.map(|t| self.size_of_ty(t)).unwrap_or(1);
-                        let n = alloc.size.as_u64()?;
-                        Some(Int::from_u64(self.z3_ctx, n.checked_div(elem_size)?))
+                        let source_ty = alloc.element_ty.as_ty()?;
+                        let array_ty = match source_ty.kind() {
+                            TyKind::Adt(def, args)
+                                if api_classify::is_maybe_uninit_type(def.did()) =>
+                            {
+                                args.first()?.as_type()?
+                            }
+                            _ => source_ty,
+                        };
+                        let TyKind::Array(_, count) = array_ty.kind() else {
+                            return None;
+                        };
+                        Some(self.const_len_term(count))
                     });
-                let size = known_len
-                    .clone()
-                    .unwrap_or_else(|| Int::from_u64(self.z3_ctx, i64::MAX as u64));
+                let size = if let Some(len) = &known_len {
+                    let elem_size = elem_ty
+                        .map(|ty| self.size_sym(ty))
+                        .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
+                    Int::mul(self.z3_ctx, &[len, &elem_size])
+                } else {
+                    Int::from_u64(self.z3_ctx, i64::MAX as u64)
+                };
                 let (alloc_id, base) = self.allocate_external(size, heap_align, elem_ty);
+                if let Some(len) = &known_len {
+                    self.alloc_mut(alloc_id).set_slice_len(len.clone());
+                }
                 if let Some(box_alloc) = args.first().and_then(|v| v.provenance_alloc_id()) {
                     self.copy_byte_tracking(box_alloc, 0, alloc_id);
                 }
