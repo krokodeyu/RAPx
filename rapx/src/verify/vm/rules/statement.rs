@@ -199,7 +199,7 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
                     let written_ty = value.ty;
                     let fully_initialized = value.facts.init;
                     let byte_buffer = pointed.provenance_alloc_id().filter(|&id| {
-                        matches!(state.alloc(id).kind, AllocKind::Slice { .. })
+                        matches!(state.alloc(id).kind, AllocKind::Slice { .. } | AllocKind::ExternalSlice { .. })
                             && state.alloc(id).element_ty.as_ty() == Some(state.tcx.types.u8)
                     });
                     let wrote_object = state.write_through_pointer(&pointed, Vec::new(), value);

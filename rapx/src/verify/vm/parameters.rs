@@ -202,13 +202,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return false;
         };
         let is_vec = api_classify::is_std_vec(adt_def.did());
+        let is_string = api_classify::is_std_string(adt_def.did());
         let is_cstring = api_classify::is_std_cstring(adt_def.did());
-        if !(api_classify::is_std_box(adt_def.did()) || is_vec || is_cstring) {
+        if !(api_classify::is_std_box(adt_def.did()) || is_vec || is_string || is_cstring) {
             return false;
         }
-        let heap_ty = substs.first().and_then(|s| s.as_type()).unwrap_or(ty);
+        let heap_ty = if is_string {
+            self.tcx.types.u8
+        } else {
+            substs.first().and_then(|s| s.as_type()).unwrap_or(ty)
+        };
         let slice_elem = match heap_ty.kind() {
             TyKind::Slice(elem) if !is_vec && !is_cstring => Some(*elem),
+            TyKind::Str if !is_vec && !is_cstring => Some(self.tcx.types.u8),
             _ => None,
         };
         let heap_size = self.size_of_ty(heap_ty);
@@ -222,7 +228,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.constraints.assertions.push(len.ge(&zero));
             let elem_size = self.size_sym(elem);
             self.allocate_slice(len, elem_size, heap_align, Some(elem))
-        } else if is_vec || is_cstring {
+        } else if is_vec || is_string {
+            let cap = self.fresh_int(&format!("vec_cap_{}", local_idx));
+            let len = self.fresh_int(&format!("vec_len_{}", local_idx));
+            self.materialize_vec_len_cap(cap.clone(), len.clone(), heap_size);
+            let elem_size = self.size_sym(heap_ty);
+            let bytes = Int::mul(self.z3_ctx, &[&cap, &elem_size]);
+            let (alloc_id, base) = self.allocate_external(bytes, heap_align, Some(heap_ty));
+            self.alloc_mut(alloc_id).set_slice_len(len);
+            (alloc_id, base)
+        } else if is_cstring {
             let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
             self.allocate_external(max_size, heap_align.clone(), Some(heap_ty))
         } else {
@@ -258,11 +273,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 source: ValueSource::None,
             },
         );
-        if is_vec {
-            let cap = self.fresh_int(&format!("vec_cap_{}", local_idx));
-            let len = self.fresh_int(&format!("vec_len_{}", local_idx));
-            self.materialize_vec_len_cap(cap, len, heap_size);
-        }
         self.set_local(
             local,
             VmValue {

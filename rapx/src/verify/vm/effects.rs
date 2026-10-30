@@ -1399,6 +1399,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) -> Option<VmValue<'z3, 'tcx>> {
         let dest_ty = self.body().local_decls[dest].ty;
         let dest_alloc_id = self.current_frame.local_alloc.get(&dest).copied();
+        self.alloc_mut(alloc_id).facts.owning = Some(base.clone());
         self.content_mut(alloc_id).facts.initialized = true;
         self.set_local(
             dest,

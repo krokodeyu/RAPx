@@ -6,6 +6,9 @@
 // the heap buffer, so dereferencing the first byte is in-bounds.
 #[rapx::verify]
 pub fn sound_string_as_ptr(s: String) -> u8 {
+    if s.is_empty() {
+        return 0;
+    }
     let p = s.as_ptr();
     unsafe { *p }
 }

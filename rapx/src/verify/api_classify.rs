@@ -564,6 +564,9 @@ pub fn is_benign_origin_use(callee: Option<DefId>) -> bool {
 pub fn is_std_vec(def_id: DefId) -> bool {
     type_ids::vec_types().contains(&def_id)
 }
+pub fn is_std_string(def_id: DefId) -> bool {
+    type_ids::string_types().contains(&def_id)
+}
 pub fn is_std_box(def_id: DefId) -> bool {
     type_ids::box_types().contains(&def_id)
 }

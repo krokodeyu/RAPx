@@ -162,7 +162,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let slice_id = slice.provenance_alloc_id()?;
         let slice_alloc = self.alloc(slice_id);
         if slice_alloc.element_ty.as_ty() != Some(self.tcx.types.u8)
-            || !matches!(slice_alloc.kind, AllocKind::Slice { .. })
+            || !matches!(slice_alloc.kind, AllocKind::Slice { .. } | AllocKind::ExternalSlice { .. })
             || slice.provenance.as_ref()?.offset.simplify().as_u64() != Some(0)
         {
             return None;

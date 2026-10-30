@@ -42,7 +42,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         .is_some_and(|value| value.z3_term == target.z3_term)
             });
         let slice_target = target.provenance.as_ref().is_some_and(|prov| {
-            matches!(self.alloc(prov.alloc_id).kind, AllocKind::Slice { .. })
+            matches!(self.alloc(prov.alloc_id).kind, AllocKind::Slice { .. } | AllocKind::ExternalSlice { .. })
         });
         let allocated_target = target.provenance.as_ref().is_some_and(|prov| {
             let alloc = self.alloc(prov.alloc_id);
@@ -241,7 +241,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if prov.offset.simplify().as_u64() != Some(0)
             || mir_utils::pointee_ty(pointer.ty) != Some(value.ty)
             || !value.facts.init
-            || !matches!(self.alloc(prov.alloc_id).kind, AllocKind::Slice { .. } | AllocKind::External)
+            || !matches!(self.alloc(prov.alloc_id).kind, AllocKind::Slice { .. } | AllocKind::External | AllocKind::ExternalSlice { .. })
             || !self.alloc(prov.alloc_id).element_ty.as_ty().is_some_and(|ty| {
                 ty != value.ty && matches!(ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
             })

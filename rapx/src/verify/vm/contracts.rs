@@ -544,6 +544,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let Some(val) = self.field_value(local, &field_path).cloned() else {
                     return;
                 };
+                if let rustc_middle::ty::TyKind::Adt(adt, _) = self.body().local_decls[local].ty.kind()
+                    && (api_classify::is_std_vec(adt.did()) || api_classify::is_std_string(adt.did()))
+                    && val.provenance_alloc_id().is_some_and(|id| {
+                        self.alloc(id).slice_len().is_some()
+                            && self.alloc(id).element_ty.as_ty() == Some(elem_ty)
+                    })
+                {
+                    return;
+                }
                 if let Some(alloc_id) = val.provenance_alloc_id() {
                     self.alloc_mut(alloc_id).facts.dead = false;
                     if self.alloc(alloc_id).size.as_u64().is_some() {

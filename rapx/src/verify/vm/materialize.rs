@@ -1,7 +1,7 @@
 //! Materialize external fields and pointee values in symbolic memory.
 
 use rustc_middle::mir::{Local, Operand, Place, Rvalue, StatementKind};
-use rustc_middle::ty::{Region, Ty};
+use rustc_middle::ty::{Region, Ty, TyKind};
 use z3::ast::Int;
 
 use crate::compat::{FxHashMap, FxHashSet};
@@ -171,15 +171,24 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } else {
                 self.align_sym(pointee)
             };
+            let tail = (!is_raw_ptr).then(|| self.unsized_tail_layout(pointee)).flatten();
+            let tail_len = tail.map(|_| self.fresh_int(&format!("field_len_{}_{}", local_idx, idx)));
             let max_size = if is_raw_ptr {
                 let s = self.fresh_int("raw_target_size");
                 self.constraints.assertions.push(s.ge(&Int::from_u64(self.z3_ctx, 0)));
                 s
+            } else if let (Some((elem, offset)), Some(len)) = (tail, tail_len.as_ref()) {
+                self.constraints.assertions.push(len.ge(&Int::from_u64(self.z3_ctx, 0)));
+                let data_size = Int::mul(self.z3_ctx, &[len, &self.size_sym(elem)]);
+                Int::add(self.z3_ctx, &[&Int::from_u64(self.z3_ctx, offset), &data_size])
             } else {
                 Int::from_u64(self.z3_ctx, i64::MAX as u64)
             };
             let (field_alloc_id, field_base) =
                 self.allocate_external(max_size, field_align, Some(pointee));
+            if let Some(len) = tail_len {
+                self.alloc_mut(field_alloc_id).set_slice_len(len);
+            }
             elem_alloc.insert(pointee, (field_alloc_id, field_base.clone()));
             // Decompose the pointee's own fields into per-allocation tracking
             // so `(*ptr).field` derefs resolve to the field value (not the raw
@@ -222,6 +231,30 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 },
             );
         }
+    }
+
+    fn unsized_tail_layout(&self, ty: Ty<'tcx>) -> Option<(Ty<'tcx>, u64)> {
+        let TyKind::Adt(adt, substs) = ty.kind() else {
+            return None;
+        };
+        if !adt.is_struct() {
+            return None;
+        }
+        let fields = &adt.non_enum_variant().fields;
+        let index = fields.len().checked_sub(1)?;
+        let tail_ty = mir_utils::field_ty(self.tcx, fields.iter().last()?, substs);
+        let elem = match tail_ty.kind() {
+            TyKind::Slice(elem) => *elem,
+            TyKind::Str => self.tcx.types.u8,
+            _ => return None,
+        };
+        let offset = mir_utils::field_offset_in_bytes(
+            self.tcx,
+            self.current_frame.current_def_id,
+            ty,
+            index,
+        );
+        (offset > 0 || index == 0).then_some((elem, offset))
     }
 
     /// Recursively decompose a (possibly nested) struct parameter into per-field

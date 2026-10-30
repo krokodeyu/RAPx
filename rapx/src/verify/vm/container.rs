@@ -128,12 +128,33 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             ty = *inner;
         }
         if let TyKind::Adt(adt, _) = ty.kind()
-            && api_classify::is_std_vec(adt.did())
+            && (api_classify::is_std_vec(adt.did()) || api_classify::is_std_string(adt.did()))
             && let Some(data_id) = self.container_data_alloc(val.provenance_alloc_id()?, val.ty)
         {
             return self.slice_len_of_alloc(data_id);
         }
         self.slice_len_from_value(val)
+    }
+
+    pub(crate) fn capacity_from_value(&self, val: &VmValue<'z3, 'tcx>) -> Option<Int<'z3>> {
+        let mut ty = val.ty;
+        while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = ty.kind() {
+            ty = *inner;
+        }
+        let TyKind::Adt(adt, _) = ty.kind() else {
+            return None;
+        };
+        if !api_classify::is_std_vec(adt.did()) && !api_classify::is_std_string(adt.did()) {
+            return None;
+        }
+        let root_id = val.provenance_alloc_id()?;
+        let data_id = self.container_data_alloc(root_id, val.ty).unwrap_or(root_id);
+        let alloc = self.alloc(data_id);
+        let elem_ty = alloc.element_ty.as_ty()?;
+        if self.size_of_ty(elem_ty) == 0 && !mir_utils::ty_has_type_param(elem_ty) {
+            return Some(Int::from_u64(self.z3_ctx, usize::MAX as u64));
+        }
+        Some(alloc.size.div(&self.size_sym_read(elem_ty)))
     }
 
     /// Resolve `x.len()` for a struct `x` (e.g. `NodeRef`) whose `len()` method

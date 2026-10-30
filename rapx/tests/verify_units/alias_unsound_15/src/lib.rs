@@ -5,6 +5,9 @@
 // UNSOUND: Vec::from_raw_parts retakes ownership, but the original raw pointer is reused.
 #[rapx::verify]
 pub fn unsound_vec_from_raw_parts_then_raw_write(mut data: Vec<u32>) -> u32 {
+    if data.is_empty() {
+        return 0;
+    }
     let ptr = data.as_mut_ptr();
     let len = data.len();
     let cap = data.capacity();

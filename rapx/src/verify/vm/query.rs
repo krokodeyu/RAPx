@@ -345,7 +345,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let (Some(elem), Some(count)) =
             (elem_size.simplify().as_u64(), count.simplify().as_u64())
         {
-            return Int::from_u64(self.z3_ctx, elem.max(1) * count.max(1));
+            if let Some(bytes) = elem.max(1).checked_mul(count.max(1)) {
+                return Int::from_u64(self.z3_ctx, bytes);
+            }
         }
         Int::mul(self.z3_ctx, &[&elem_size, &count])
     }

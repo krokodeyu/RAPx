@@ -15,6 +15,7 @@ static TYPES: OnceLock<Types> = OnceLock::new();
 struct Types {
     box_types: Vec<DefId>,
     cstring_types: Vec<DefId>,
+    string_types: Vec<DefId>,
     vec_types: Vec<DefId>,
     nonnull_types: Vec<DefId>,
     maybe_uninit_types: Vec<DefId>,
@@ -37,6 +38,7 @@ fn init_types(tcx: TyCtxt) -> Types {
     let mut types = Types {
         box_types: Vec::new(),
         cstring_types: Vec::new(),
+        string_types: Vec::new(),
         vec_types: Vec::new(),
         nonnull_types: Vec::new(),
         maybe_uninit_types: Vec::new(),
@@ -138,6 +140,7 @@ fn collect_type_by_path(types: &mut Types, name: &str, did: DefId) {
     };
     let ids = match group {
         TypeGroup::Vec => &mut types.vec_types,
+        TypeGroup::String => &mut types.string_types,
         TypeGroup::Iter => &mut types.iter_types,
         TypeGroup::NonNull => &mut types.nonnull_types,
         TypeGroup::MaybeUninit => &mut types.maybe_uninit_types,
@@ -155,6 +158,7 @@ fn collect_type_by_path(types: &mut Types, name: &str, did: DefId) {
 #[derive(Debug, PartialEq, Eq)]
 enum TypeGroup {
     Vec,
+    String,
     Iter,
     NonNull,
     MaybeUninit,
@@ -168,6 +172,7 @@ enum TypeGroup {
 fn classify_type_path(name: &str) -> Option<TypeGroup> {
     Some(match name {
         "alloc::vec::Vec" | "std::vec::Vec" => TypeGroup::Vec,
+        "alloc::string::String" | "std::string::String" => TypeGroup::String,
         "core::slice::iter::Iter"
         | "core::slice::iter::IterMut"
         | "std::slice::Iter"
@@ -288,6 +293,8 @@ type_defs! {
     cstring_types,
     /// `alloc::vec::Vec`.
     vec_types,
+    /// `alloc::string::String`.
+    string_types,
     /// `core::ptr::NonNull`.
     nonnull_types,
     /// `core::mem::MaybeUninit`.

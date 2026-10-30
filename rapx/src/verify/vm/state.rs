@@ -170,6 +170,7 @@ pub(crate) enum AllocKind<'z3> {
     /// term (the caller may pass any allocation); nullability is *not* stored
     /// here — it is tracked via the pointer term (`term == 0`) path conditions.
     External,
+    ExternalSlice { len: Int<'z3> },
 }
 
 /// The element type of an allocation's contents, either a concrete [`Ty`] or
@@ -356,7 +357,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
 
     /// Whether this allocation models an external raw-pointer parameter.
     pub(crate) fn is_external(&self) -> bool {
-        matches!(self.kind, AllocKind::External)
+        matches!(self.kind, AllocKind::External | AllocKind::ExternalSlice { .. })
     }
 
     /// The slice/array element count, if this allocation is slice data.
@@ -368,7 +369,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
     /// when the length was never materialized.
     pub(crate) fn slice_len(&self) -> Option<&Int<'z3>> {
         match &self.kind {
-            AllocKind::Slice { len } => Some(len),
+            AllocKind::Slice { len } | AllocKind::ExternalSlice { len } => Some(len),
             _ => None,
         }
     }
@@ -376,7 +377,11 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
     /// Mark this allocation as slice data with the given element count.
     /// Callers must keep `size == len * sizeof(element_ty)` consistent.
     pub(crate) fn set_slice_len(&mut self, len: Int<'z3>) {
-        self.kind = AllocKind::Slice { len };
+        self.kind = if self.is_external() {
+            AllocKind::ExternalSlice { len }
+        } else {
+            AllocKind::Slice { len }
+        };
     }
 }
 
@@ -1831,6 +1836,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             {
                 return Some(VmValue::new(len, place_ty));
             }
+            if let Some(base_val) = self.local_value(place.local)
+                && self.is_cap_field_read(base_val.ty, &field_path)
+                && let Some(cap) = self.capacity_from_value(base_val)
+            {
+                return Some(VmValue::new(cap, place_ty));
+            }
             if !has_downcast {
                 // Fallback: when the base local has provenance, propagate it
                 // to field accesses. This handles pointer-wrapper types (Box,
@@ -1893,6 +1904,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     && let Some(len) = self.len_from_value(base_val)
                 {
                     return Some(VmValue::new(len, place_ty));
+                }
+                if let Some(base_val) = self.local_value(place.local)
+                    && self.is_cap_field_read(base_val.ty, &field_path)
+                    && let Some(cap) = self.capacity_from_value(base_val)
+                {
+                    return Some(VmValue::new(cap, place_ty));
                 }
             }
         }
@@ -2065,28 +2082,72 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Whether `field_path` selects a length field.
     fn is_len_field_read(&self, ty: Ty<'tcx>, field_path: &[usize]) -> bool {
-        if field_path.len() != 1 {
+        if field_path.is_empty() {
             return false;
         }
-        let field = field_path[0];
-        let adt = match ty.kind() {
+        let mut view_ty = match ty.kind() {
             rustc_middle::ty::TyKind::Ref(_, inner, _)
             | rustc_middle::ty::TyKind::RawPtr(inner, _) => match inner.kind() {
                 rustc_middle::ty::TyKind::Slice(_) | rustc_middle::ty::TyKind::Str => {
-                    return field == 1;
+                    return field_path == [1];
                 }
-                rustc_middle::ty::TyKind::Adt(adt_def, _) => *adt_def,
+                rustc_middle::ty::TyKind::Adt(..) => *inner,
                 _ => return false,
             },
-            rustc_middle::ty::TyKind::Adt(adt_def, _) => *adt_def,
+            rustc_middle::ty::TyKind::Adt(..) => ty,
             _ => return false,
         };
-        adt.is_struct()
-            && adt
+        if field_path.len() > 1
+            && !matches!(view_ty.kind(), TyKind::Adt(adt, _) if crate::verify::api_classify::is_std_string(adt.did()))
+        {
+            return false;
+        }
+        for (index, &field_idx) in field_path.iter().enumerate() {
+            let TyKind::Adt(adt, substs) = view_ty.kind() else {
+                return false;
+            };
+            if !adt.is_struct() {
+                return false;
+            }
+            let Some(field) = adt
                 .non_enum_variant()
                 .fields
-                .get(rustc_abi::FieldIdx::from_usize(field))
-                .is_some_and(|f| f.name.as_str() == "len")
+                .get(rustc_abi::FieldIdx::from_usize(field_idx))
+            else {
+                return false;
+            };
+            if index + 1 == field_path.len() {
+                return field.name.as_str() == "len";
+            }
+            view_ty = mir_utils::field_ty(self.tcx, field, substs);
+        }
+        false
+    }
+
+    fn is_cap_field_read(&self, ty: Ty<'tcx>, field_path: &[usize]) -> bool {
+        if field_path.is_empty() {
+            return false;
+        }
+        let mut view_ty = match ty.kind() {
+            TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
+            _ => ty,
+        };
+        if !matches!(view_ty.kind(), TyKind::Adt(adt, _) if crate::verify::api_classify::is_std_vec(adt.did()) || crate::verify::api_classify::is_std_string(adt.did())) {
+            return false;
+        }
+        for (index, &field_idx) in field_path.iter().enumerate() {
+            let TyKind::Adt(adt, substs) = view_ty.kind() else {
+                return false;
+            };
+            let Some(field) = adt.non_enum_variant().fields.get(rustc_abi::FieldIdx::from_usize(field_idx)) else {
+                return false;
+            };
+            if index + 1 == field_path.len() {
+                return field.name.as_str() == "cap";
+            }
+            view_ty = mir_utils::field_ty(self.tcx, field, substs);
+        }
+        false
     }
 
     /// Create an unknown value for a place.
